@@ -388,11 +388,12 @@ async def show_category(update, context, cid: int, page: int):
         stock = "" if p["stock"] < 0 else (
             "  · SOLD OUT" if p["stock"] == 0 else f"  · {p['stock']} left"
         )
+        icon = p["icon"] or "•"
         lines.append(
-            f"• <b>{esc(p['title'])}</b> — {money(p['price'])} {CURRENCY}{stock}"
+            f"{icon} <b>{esc(p['title'])}</b> — {money(p['price'])} {CURRENCY}{stock}"
         )
         rows.append([btn(
-            f"{p['title'][:28]}  ·  {money(p['price'])} {CURRENCY}",
+            f"{icon} {p['title'][:26]}  ·  {money(p['price'])} {CURRENCY}",
             f"prod:{p['id']}:{cid}:{page}",
         )])
 
@@ -1244,6 +1245,33 @@ IMAGE_MATCH_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 IMAGE_MATCH_THRESHOLD = 0.55
 IMAGE_MATCH_TIE_MARGIN = 0.04
 
+# keyword -> emoji, checked against the uploaded image's FILENAME (not the
+# product title) so list rows get an automatic icon without any manual
+# per-product setup. First match wins, so order matters.
+ICON_KEYWORDS = [
+    ("netflix", "🎬"), ("prime", "🎬"), ("disney", "🎬"), ("hbo", "🎬"),
+    ("spotify", "🎧"), ("apple music", "🎧"), ("soundcloud", "🎧"),
+    ("youtube", "▶️"),
+    ("vpn", "🛡️"), ("nord", "🛡️"), ("express", "🛡️"), ("surfshark", "🛡️"),
+    ("gpt", "🤖"), ("openai", "🤖"), ("claude", "🤖"), ("gemini", "🤖"),
+    ("chatgpt", "🤖"), ("copilot", "🤖"), ("anthropic", "🤖"), ("api", "🤖"),
+    ("canva", "🎨"), ("adobe", "🎨"), ("photoshop", "🎨"),
+    ("office", "📄"), ("microsoft", "📄"), ("windows", "🪟"),
+    ("game", "🎮"), ("steam", "🎮"), ("xbox", "🎮"), ("playstation", "🎮"),
+    ("discord", "💬"), ("telegram", "💬"),
+    ("proxy", "🌐"), ("host", "🌐"), ("domain", "🌐"),
+    ("card", "💳"), ("gift", "🎁"),
+]
+DEFAULT_ICON = "📦"
+
+
+def _im_icon_for(fname: str) -> str:
+    norm = _im_normalize(fname)
+    for kw, icon in ICON_KEYWORDS:
+        if kw in norm:
+            return icon
+    return DEFAULT_ICON
+
 
 def _im_normalize(text: str) -> str:
     text = os.path.splitext(text)[0]
@@ -1372,7 +1400,7 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    db.update_product(p["id"], photo_file_id=photo_file_id)
+    db.update_product(p["id"], photo_file_id=photo_file_id, icon=_im_icon_for(fname))
     used_titles.add(title)
     fsm["used_titles"] = list(used_titles)
     context.user_data["fsm"] = fsm

@@ -361,6 +361,7 @@ def init():
     _add_col("users", "ref_bonus_paid", "INTEGER DEFAULT 0")
     _add_col("orders", "discount", f"{real} DEFAULT 0")
     _add_col("orders", "coupon_code", "TEXT")
+    _add_col("products", "icon", "TEXT")
     execute("CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by)")
 
 
@@ -593,7 +594,7 @@ def add_product(title, description, price, photo_file_id, delivery_content,
 def update_product(pid, **fields):
     allowed = {
         "category_id", "title", "description", "price", "photo_file_id",
-        "delivery_content", "stock", "is_active", "sort_order",
+        "delivery_content", "stock", "is_active", "sort_order", "icon",
     }
     sets, vals = [], []
     for k, v in fields.items():

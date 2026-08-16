@@ -24,6 +24,13 @@ after deploying.
   then pay for any product instantly from balance — no waiting, no TXID
 - **Support tickets**: opens a persistent two-way thread inside the same chat;
   admin replies land back on the buyer instantly, no external group needed
+- **QR codes**: every payment/top-up screen shows a scannable QR of the wallet
+  address alongside the copy-tappable text
+- **Coupons**: percent or fixed-amount discount codes, applied at checkout
+- **Referral program**: every user gets a personal invite link; optional
+  balance bonus per signup (`REFERRAL_BONUS`)
+- **Favorites**: save products for later from the product page
+- **Search & sort**: search products by name, sort by price or newest
 
 **For you (admin)**
 - Add / edit / hide / delete products, all from chat
@@ -42,6 +49,14 @@ after deploying.
   your reply is delivered straight to the buyer's chat
 - **Sample catalogue seeder** (`python seed.py`) — one command populates ~90
   ready-made digital products across 6 categories to get the shop started
+- **Coupon manager**: create/disable/delete discount codes from the admin panel
+- **Manual balance adjust**: credit or debit any user's wallet balance directly
+- **Order/top-up search**: look up by TXID (partial match) or exact buyer ID
+- **Admin action log**: every balance adjust, block/unblock, and coupon change
+  is recorded with who did it and when
+- **Block/unblock buyers**: right from an order's detail screen
+- **Rate limiting**: cooldown on TXID submissions and ticket messages to
+  discourage spam
 
 **Cost: $0.** Render free tier + Supabase free Postgres + Telegram's own image
 hosting. No credit card required anywhere.
@@ -273,6 +288,8 @@ docker run -d --restart always --env-file .env -v $PWD/data:/app tgshop
 | `SQLITE_PATH` | | `shop.db` | Only used when `DATABASE_URL` is empty |
 | `PORT` | | `8080` | Health endpoint port; hosts set this for you |
 | `SEED_ON_BOOT` | | `true` | Auto-runs `seed.py` on every startup. Set `false` to disable once you have your own catalogue |
+| `PAYMENT_EXPIRY_MINUTES` | | `30` | Shown to buyers as the payment window (display only, not auto-enforced) |
+| `REFERRAL_BONUS` | | `0` | USDT credited to a user's balance when someone joins via their referral link. `0` disables referral payouts |
 
 Changing wallets, texts, products or categories does **not** require touching
 these — that's all done in the admin panel.

@@ -7,10 +7,14 @@ Postgres/SQLite holds the data, and payment verification is done by you.
 
 import asyncio
 import html
+import io
 import logging
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import qrcode
 
 # Load a local .env when present (handy for running on your own machine).
 # Must happen before `import db`, which reads DATABASE_URL at import time.
@@ -25,6 +29,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
+    ReplyKeyboardMarkup,
     Update,
 )
 from telegram.constants import ParseMode
@@ -61,6 +66,7 @@ SEED_ON_BOOT = os.getenv("SEED_ON_BOOT", "true").strip().lower() not in (
 
 PAGE_SIZE = 6
 ADMIN_PAGE_SIZE = 8
+PAYMENT_EXPIRY_MINUTES = int(os.getenv("PAYMENT_EXPIRY_MINUTES", "30"))
 
 NETWORKS = [
     ("TRC20", "TRC20 · Tron"),
@@ -126,6 +132,33 @@ def btn(text, data):
     return InlineKeyboardButton(text, callback_data=data)
 
 
+# persistent bottom "tab" menu — plain emoji text, no /commands
+TAB_SHOP = "🛍 Shop"
+TAB_PROFILE = "👤 Profile"
+TAB_WALLET = "💰 Wallet"
+TAB_ORDERS = "🧾 My orders"
+TAB_SUPPORT = "💬 Support"
+TAB_HOME = "🏠 Home"
+
+TAB_ROUTES = {
+    TAB_SHOP: "shop",
+    TAB_PROFILE: "profile",
+    TAB_WALLET: "wallet",
+    TAB_ORDERS: "myorders:0",
+    TAB_SUPPORT: "support",
+    TAB_HOME: "home",
+}
+
+
+def tabs_markup():
+    rows = [
+        [TAB_SHOP, TAB_ORDERS],
+        [TAB_PROFILE, TAB_WALLET],
+        [TAB_SUPPORT, TAB_HOME],
+    ]
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
 def pager(prefix: str, page: int, total: int, page_size: int):
     """prefix must already contain everything except the page number."""
     pages = max(1, -(-total // page_size))
@@ -138,6 +171,31 @@ def pager(prefix: str, page: int, total: int, page_size: int):
     if page < pages - 1:
         row.append(btn("▶️", f"{prefix}{page + 1}"))
     return [row]
+
+
+def make_qr(data: str):
+    """Generate a QR code PNG for a wallet address. Returns bytes."""
+    img = qrcode.make(data, box_size=8, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+# simple per-user cooldown for spam-prone actions (txid submit, ticket msg)
+_last_action = {}
+RATE_LIMIT_SECONDS = 8
+
+
+def rate_limited(user_id: int, bucket: str) -> bool:
+    """True if the user must wait before repeating this action."""
+    key = (user_id, bucket)
+    last = _last_action.get(key, 0)
+    t = time.monotonic()
+    if t - last < RATE_LIMIT_SECONDS:
+        return True
+    _last_action[key] = t
+    return False
 
 
 def configured_wallets():
@@ -239,7 +297,11 @@ async def deliver_order(context, o, p):
         f"Amount: {money(o['price'])} {CURRENCY} ({esc(o['network'])})\n\n"
     )
     if p and p["delivery_content"]:
-        msg += "Here is your product:\n\n" + esc(p["delivery_content"])
+        msg += (
+            "📩 Please contact support with your order ID "
+            f"<b>{order_code(o['id'])}</b> to receive your account logins.\n"
+            "⏱ Support usually replies within a few hours."
+        )
     else:
         msg += "An admin will deliver your product shortly."
     try:
@@ -288,15 +350,28 @@ async def show_category(update, context, cid: int, page: int):
     cat = db.get_category(cid) if cid else None
     cat_filter = cid if cid else None  # cid == 0 means "everything"
     back = "shop" if db.list_categories() else "home"
-    total = db.count_products(category_id=cat_filter, only_active=True)
+    sort = (context.user_data or {}).get("shop_sort", "default")
+    search = (context.user_data or {}).get("shop_search")
+    total = db.count_products(category_id=cat_filter, only_active=True, search=search)
     items = db.list_products(
         category_id=cat_filter, only_active=True,
-        limit=PAGE_SIZE, offset=page * PAGE_SIZE,
+        limit=PAGE_SIZE, offset=page * PAGE_SIZE, search=search, sort=sort,
     )
 
     title = esc(cat["name"]) if cat else "All products"
+    if search:
+        title += f' · "{esc(search)}"'
+
+    SORT_LABELS = {"default": "Default", "price_asc": "Price ↑",
+                   "price_desc": "Price ↓", "newest": "Newest"}
+    sort_row = [btn(("✅ " if sort == k else "") + label, f"csort:{cid}:{k}")
+                for k, label in SORT_LABELS.items()]
+
     if not total:
-        rows = [[btn("⬅️  Back", back)]]
+        rows = [sort_row[:2], sort_row[2:],
+                [btn("🔎  Search", "csearch"), btn("🚫  Clear search", "csclr")]
+                if search else [btn("🔎  Search", "csearch")],
+                [btn("⬅️  Back", back)]]
         await render(update, f"📂 <b>{title}</b>\n\nNothing here yet.", kb(rows))
         return
 
@@ -315,6 +390,12 @@ async def show_category(update, context, cid: int, page: int):
         )])
 
     rows += pager(f"cat:{cid}:", page, total, PAGE_SIZE)
+    rows.append(sort_row[:2])
+    rows.append(sort_row[2:])
+    search_row = [btn("🔎  Search", "csearch")]
+    if search:
+        search_row.append(btn("🚫  Clear search", "csclr"))
+    rows.append(search_row)
     rows.append([btn("⬅️  Back", back), btn("🏠  Home", "home")])
     await render(update, "\n".join(lines), kb(rows))
 
@@ -345,14 +426,28 @@ async def show_product(update, context, pid: int, cid: int, page: int):
     elif p["stock"] > 0:
         parts.append(f"📦 In stock: {p['stock']}")
 
+    uid = update.effective_user.id
+    is_fav = db.is_favorite(uid, p["id"])
+
     rows = []
     if p["stock"] != 0:
         rows.append([btn(f"💳  Buy for {money(p['price'])} {CURRENCY}",
                          f"buy:{p['id']}")])
+    rows.append([btn("💔  Unfavorite" if is_fav else "❤️  Favorite",
+                     f"favt:{p['id']}:{cid}:{page}")])
     rows.append([btn("⬅️  Back", f"cat:{cid}:{page}"), btn("🏠  Home", "home")])
 
     await render(update, "\n".join(parts), kb(rows),
                  photo=p["photo_file_id"] or None)
+
+
+def _checkout_price(context, pid, base_price):
+    """Apply a coupon staged in user_data for this product, if any."""
+    coupon = (context.user_data or {}).get("checkout_coupon")
+    if not coupon or coupon.get("pid") != pid:
+        return base_price, 0, None
+    discount = min(coupon["discount"], base_price)
+    return round(base_price - discount, 2), discount, coupon["code"]
 
 
 async def show_networks(update, context, pid: int):
@@ -365,7 +460,8 @@ async def show_networks(update, context, pid: int):
     wallets = configured_wallets()
     uid = update.effective_user.id
     bal = db.get_balance(uid)
-    if not wallets and bal < p["price"]:
+    price, discount, coupon_code = _checkout_price(context, pid, p["price"])
+    if not wallets and bal < price:
         await render(
             update,
             "⚠️ No payment wallets are configured yet.\n"
@@ -375,16 +471,27 @@ async def show_networks(update, context, pid: int):
         return
 
     rows = []
-    if bal >= p["price"]:
+    if bal >= price:
         rows.append([btn(f"💰 Pay from balance ({money(bal)} {CURRENCY})",
                          f"balpay:{pid}")])
     rows += [[btn(f"💠 {label}", f"net:{pid}:{code}")]
              for code, label, _ in wallets]
+    if coupon_code:
+        rows.append([btn("🚫  Remove coupon", f"cpnrm:{pid}")])
+    else:
+        rows.append([btn("🎟  Have a coupon?", f"cpna:{pid}")])
     rows.append([btn("⬅️  Back", f"prod:{pid}:0:0")])
 
-    txt = (
-        f"<b>{esc(p['title'])}</b>\n"
-        f"Amount: <b>{money(p['price'])} {CURRENCY}</b>\n"
+    txt = f"<b>{esc(p['title'])}</b>\n"
+    if discount:
+        txt += (
+            f"Price: <s>{money(p['price'])}</s> "
+            f"<b>{money(price)} {CURRENCY}</b> "
+            f"(coupon {esc(coupon_code)}, -{money(discount)})\n"
+        )
+    else:
+        txt += f"Amount: <b>{money(price)} {CURRENCY}</b>\n"
+    txt += (
         f"Your balance: {money(bal)} {CURRENCY}\n\n"
         "Choose how you want to pay:"
     )
@@ -400,18 +507,32 @@ async def show_payment(update, context, pid: int, net: str):
                      kb([[btn("🏠  Home", "home")]]))
         return
 
-    oid = db.create_order(user.id, user.username, p, net, address)
+    price, discount, coupon_code = _checkout_price(context, pid, p["price"])
+    oid = db.create_order(user.id, user.username, p, net, address,
+                          price=price, discount=discount, coupon_code=coupon_code)
+    if coupon_code:
+        coupon = db.get_coupon(coupon_code)
+        if coupon:
+            db.redeem_coupon(coupon["id"], user.id, oid)
+    context.user_data.pop("checkout_coupon", None)
 
+    discount_line = (
+        f"Discount: -{money(discount)} {CURRENCY} (coupon {esc(coupon_code)})\n"
+        if discount else ""
+    )
     txt = (
         f"🧾 <b>Order {order_code(oid)}</b>\n\n"
         f"Product: <b>{esc(p['title'])}</b>\n"
-        f"Amount: <b>{money(p['price'])} {CURRENCY}</b>\n"
+        f"{discount_line}"
+        f"Amount: <b>{money(price)} {CURRENCY}</b>\n"
         f"Network: <b>{esc(NET_LABEL.get(net, net))}</b>\n\n"
-        f"Send exactly <b>{money(p['price'])} {CURRENCY}</b> to this address:\n"
+        f"Send exactly <b>{money(price)} {CURRENCY}</b> to this address:\n"
         f"<code>{esc(address)}</code>\n"
-        "<i>(tap the address to copy)</i>\n\n"
+        "<i>(tap the address to copy, or scan the QR code above)</i>\n\n"
         "⚠️ Send only USDT on the "
         f"<b>{esc(net)}</b> network. Funds sent on another network are lost.\n\n"
+        f"⏱ This order expires in <b>{PAYMENT_EXPIRY_MINUTES} minutes</b> if no "
+        "TXID is submitted.\n\n"
         "When the transfer is done, tap <b>I have paid</b> and send your "
         "transaction hash (TXID)."
     )
@@ -419,7 +540,14 @@ async def show_payment(update, context, pid: int, net: str):
         [btn("✅  I have paid", f"paid:{oid}")],
         [btn("🚫  Cancel order", f"cxl:{oid}")],
     ]
-    await render(update, txt, kb(rows))
+    try:
+        qr = make_qr(address)
+        await update.effective_chat.send_photo(qr, caption=txt,
+                                               reply_markup=kb(rows),
+                                               parse_mode=ParseMode.HTML)
+    except Exception as e:  # noqa: BLE001
+        log.debug("qr send failed: %s", e)
+        await render(update, txt, kb(rows))
 
 
 async def show_my_orders(update, context, page: int):
@@ -453,6 +581,8 @@ async def show_profile(update, context):
     orders_n = db.count_orders(user_id=u.id)
     spent = db.user_spent(u.id)
     ticket = db.get_open_ticket(u.id)
+    refs = db.count_referrals(u.id)
+    favs = db.count_favorites(u.id)
 
     txt = (
         f"👤 <b>Your profile</b>\n\n"
@@ -463,16 +593,59 @@ async def show_profile(update, context):
         f"💰 Wallet balance: <b>{money(bal)} {CURRENCY}</b>\n"
         f"🧾 Orders placed: <b>{orders_n}</b>\n"
         f"💵 Total spent: <b>{money(spent)} {CURRENCY}</b>\n"
+        f"❤️ Favorites: <b>{favs}</b>\n"
+        f"🤝 Referrals: <b>{refs}</b>\n"
     )
     if ticket:
         txt += "\n🎫 You have an open support ticket."
 
     rows = [
         [btn("💰  Wallet", "wallet"), btn("🧾  My orders", "myorders:0")],
+        [btn("❤️  Favorites", "favs:0"), btn("🤝  Referrals", "refinfo")],
         [btn("💬  Support", "support")],
         [btn("🏠  Home", "home")],
     ]
     await render(update, txt, kb(rows))
+
+
+async def show_referral_info(update, context):
+    u = update.effective_user
+    refs = db.count_referrals(u.id)
+    me = await context.bot.get_me()
+    link = f"https://t.me/{me.username}?start=ref_{u.id}"
+    txt = (
+        "🤝 <b>Referrals</b>\n\n"
+        f"Your referral link:\n<code>{esc(link)}</code>\n\n"
+        f"People invited: <b>{refs}</b>\n"
+    )
+    if REFERRAL_BONUS > 0:
+        txt += (
+            f"\nYou earn <b>{money(REFERRAL_BONUS)} {CURRENCY}</b> for every "
+            "new user who joins with your link."
+        )
+    await render(update, txt, kb([[btn("👤  Profile", "profile")],
+                                   [btn("🏠  Home", "home")]]))
+
+
+async def show_favorites(update, context, page: int):
+    uid = update.effective_user.id
+    total = db.count_favorites(uid)
+    items = db.list_favorites(uid, limit=PAGE_SIZE, offset=page * PAGE_SIZE)
+    if not total:
+        await render(update, "❤️ You have no favorites yet.",
+                     kb([[btn("🛍  Browse shop", "shop")],
+                         [btn("🏠  Home", "home")]]))
+        return
+    lines = [f"❤️ <b>Your favorites</b>  ·  {total} item(s)", ""]
+    rows = []
+    for p in items:
+        avail = p["is_active"] and p["stock"] != 0
+        mark = "" if avail else "  · unavailable"
+        lines.append(f"• <b>{esc(p['title'])}</b> — {money(p['price'])} {CURRENCY}{mark}")
+        rows.append([btn(f"{p['title'][:28]}", f"prod:{p['id']}:0:0")])
+    rows += pager("favs:", page, total, PAGE_SIZE)
+    rows.append([btn("🏠  Home", "home")])
+    await render(update, "\n".join(lines), kb(rows))
 
 
 # ----------------------------------------------------------------- wallet
@@ -546,9 +719,11 @@ async def show_topup_payment(update, context, net: str):
         f"Network: <b>{esc(NET_LABEL.get(net, net))}</b>\n\n"
         f"Send exactly <b>{money(amount)} {CURRENCY}</b> to this address:\n"
         f"<code>{esc(address)}</code>\n"
-        "<i>(tap the address to copy)</i>\n\n"
+        "<i>(tap the address to copy, or scan the QR code above)</i>\n\n"
         "⚠️ Send only USDT on the "
         f"<b>{esc(net)}</b> network. Funds sent on another network are lost.\n\n"
+        f"⏱ This top-up expires in <b>{PAYMENT_EXPIRY_MINUTES} minutes</b> if no "
+        "TXID is submitted.\n\n"
         "When the transfer is done, tap <b>I have paid</b> and send your "
         "transaction hash (TXID)."
     )
@@ -556,7 +731,14 @@ async def show_topup_payment(update, context, net: str):
         [btn("✅  I have paid", f"tpaid:{tid}")],
         [btn("🚫  Cancel", f"tcxl:{tid}")],
     ]
-    await render(update, txt, kb(rows))
+    try:
+        qr = make_qr(address)
+        await update.effective_chat.send_photo(qr, caption=txt,
+                                               reply_markup=kb(rows),
+                                               parse_mode=ParseMode.HTML)
+    except Exception as e:  # noqa: BLE001
+        log.debug("qr send failed: %s", e)
+        await render(update, txt, kb(rows))
 
 
 async def show_topup_history(update, context, page: int):
@@ -638,6 +820,8 @@ async def show_admin(update, context):
          btn(f"🎫  Tickets ({topen})", "tk:open:0")],
         [btn("📦  Products", "ap:0"), btn("📂  Categories", "ac")],
         [btn("💠  Wallets", "aw"), btn("📊  Stats", "astat")],
+        [btn("🎟  Coupons", "acp:0"), btn("💵  Adjust balance", "aadj")],
+        [btn("🔍  Search order/txid", "asrch"), btn("📜  Admin log", "alog:0")],
         [btn("📣  Broadcast", "abc"), btn("📝  Texts", "ast")],
         [btn("🏠  Home", "home")],
     ]
@@ -724,6 +908,50 @@ async def show_wallets(update, context):
     await render(update, "\n".join(lines), kb(rows))
 
 
+# ----------------------------------------------------------------- admin coupons
+def coupon_line(c):
+    amt = f"{c['amount']:.0f}%" if c["kind"] == "percent" else f"{money(c['amount'])} {CURRENCY}"
+    uses = f"{c['used_count']}/{c['max_uses']}" if c["max_uses"] >= 0 else f"{c['used_count']}/∞"
+    state = "🟢" if c["is_active"] else "🔴"
+    return f"{state} <b>{esc(c['code'])}</b> — {amt} off · used {uses}"
+
+
+async def show_admin_coupons(update, context, page: int):
+    total = db.count_coupons()
+    items = db.list_coupons(limit=ADMIN_PAGE_SIZE, offset=page * ADMIN_PAGE_SIZE)
+    rows = [[btn("➕  New coupon", "acpn")]]
+    for c in items:
+        rows.append([btn(f"{'🟢' if c['is_active'] else '🔴'} {c['code']}", f"acpv:{c['id']}")])
+    rows += pager("acp:", page, total, ADMIN_PAGE_SIZE)
+    rows.append([btn("⬅️  Back", "am")])
+    body = f"🎟 <b>Coupons</b>\n\n{total} coupon(s)."
+    if not total:
+        body += "\n\nNo coupons yet."
+    await render(update, body, kb(rows))
+
+
+async def show_admin_coupon(update, context, cid: int):
+    c = db.get_coupon_by_id(cid)
+    if not c:
+        return await show_admin_coupons(update, context, 0)
+    amt = f"{c['amount']:.0f}%" if c["kind"] == "percent" else f"{money(c['amount'])} {CURRENCY}"
+    txt = (
+        f"🎟 <b>{esc(c['code'])}</b>\n\n"
+        f"Discount: <b>{amt}</b> ({c['kind']})\n"
+        f"Uses: {c['used_count']} / {'∞' if c['max_uses'] < 0 else c['max_uses']}\n"
+        f"Max per user: {c['max_uses_per_user']}\n"
+        f"Min order: {money(c['min_order'])} {CURRENCY}\n"
+        f"Expires: {esc(c['expires_at']) if c['expires_at'] else 'never'}\n"
+        f"Status: {'🟢 active' if c['is_active'] else '🔴 disabled'}"
+    )
+    rows = [
+        [btn("🔴 Disable" if c["is_active"] else "🟢 Enable", f"acpt:{cid}")],
+        [btn("🗑  Delete", f"acpd:{cid}")],
+        [btn("⬅️  Back", "acp:0")],
+    ]
+    await render(update, txt, kb(rows))
+
+
 async def show_admin_orders(update, context, status: str, page: int):
     st = None if status == "all" else status
     total = db.count_orders(status=st)
@@ -774,6 +1002,9 @@ async def show_admin_order(update, context, oid: int):
     if o["status"] in ("pending", "awaiting_payment"):
         rows.append([btn("✅ Approve", f"aok:{oid}"),
                      btn("❌ Reject", f"ano:{oid}")])
+    blocked = db.is_blocked(o["user_id"])
+    rows.append([btn("✅ Unblock buyer" if blocked else "🚫 Block buyer",
+                     f"aub:{o['user_id']}:{oid}")])
     rows.append([btn("⬅️  Back", "ao:pending:0"), btn("🏠  Admin", "am")])
     await render(update, order_detail_text(o), kb(rows))
 
@@ -881,11 +1112,93 @@ async def show_admin_ticket(update, context, tid: int):
     await render(update, admin_ticket_text(t, messages), kb(rows))
 
 
+# ----------------------------------------------------------------- admin log
+ADMIN_ACTION_LABEL = {
+    "adjust_balance": "💵 Balance adjust",
+    "block_user": "🚫 Block/unblock",
+    "coupon_create": "🎟 Coupon created",
+    "coupon_toggle": "🎟 Coupon toggled",
+    "coupon_delete": "🎟 Coupon deleted",
+}
+
+
+async def show_admin_log(update, context, page: int):
+    total = db.count_admin_log()
+    items = db.list_admin_log(limit=ADMIN_PAGE_SIZE, offset=page * ADMIN_PAGE_SIZE)
+    lines = ["📜 <b>Admin action log</b>", ""]
+    if not items:
+        lines.append("<i>No actions logged yet.</i>")
+    for a in items:
+        label = ADMIN_ACTION_LABEL.get(a["action"], esc(a["action"]))
+        lines.append(
+            f"{esc(a['created_at'])} · admin <code>{a['admin_id']}</code>\n"
+            f"     {label} — {esc(a['detail'])}"
+        )
+    rows = pager("alog:", page, total, ADMIN_PAGE_SIZE)
+    rows.append([btn("⬅️  Back", "am")])
+    await render(update, "\n".join(lines), kb(rows))
+
+
+# ----------------------------------------------------------------- admin search
+async def show_admin_search_result(update, context, term: str, page: int):
+    o_total = db.count_search_orders(term)
+    t_total = db.count_search_topups(term)
+    orders = db.search_orders(term, limit=5, offset=page * 5)
+    topups = db.search_topups(term, limit=5, offset=page * 5)
+    lines = [f"🔍 <b>Search results for</b> <code>{esc(term)}</code>", ""]
+    rows = []
+    if orders:
+        lines.append(f"🧾 Orders ({o_total}):")
+        for o in orders:
+            lines.append(f"  {order_code(o['id'])} · {esc(o['product_title'])[:24]}")
+            rows.append([btn(f"{order_code(o['id'])}", f"aov:{o['id']}")])
+    if topups:
+        lines.append(f"\n💰 Top-ups ({t_total}):")
+        for t in topups:
+            lines.append(f"  {topup_code(t['id'])} · {money(t['amount'])} {CURRENCY}")
+            rows.append([btn(f"{topup_code(t['id'])}", f"atv:{t['id']}")])
+    if not orders and not topups:
+        lines.append("Nothing found.")
+    rows.append([btn("🔍  New search", "asrch"), btn("⬅️  Back", "am")])
+    await render(update, "\n".join(lines), kb(rows))
+
+
 # ----------------------------------------------------------------- commands
+REFERRAL_BONUS = float(os.getenv("REFERRAL_BONUS", "0") or 0)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
+    is_new = db.execute("SELECT 1 FROM users WHERE user_id = ?", (u.id,), "one") is None
     db.upsert_user(u.id, u.username, u.first_name)
+    if db.is_blocked(u.id):
+        await update.message.reply_text("🚫 You are blocked from using this bot.")
+        return
+
+    if is_new and context.args:
+        arg = context.args[0]
+        if arg.startswith("ref_"):
+            try:
+                ref_id = int(arg[4:])
+            except ValueError:
+                ref_id = None
+            if ref_id and db.set_referrer_if_unset(u.id, ref_id):
+                if REFERRAL_BONUS > 0 and db.mark_ref_bonus_paid(u.id):
+                    db.adjust_balance(ref_id, REFERRAL_BONUS)
+                    try:
+                        await context.bot.send_message(
+                            ref_id,
+                            f"🎉 Someone joined using your referral link! "
+                            f"{money(REFERRAL_BONUS)} {CURRENCY} has been added "
+                            "to your balance.",
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+
     context.user_data.pop("fsm", None)
+    await update.message.reply_text(
+        "Menu opened 👇", reply_markup=tabs_markup(),
+    )
     await update.message.reply_text(
         welcome_text(), reply_markup=main_menu_markup(u.id),
         parse_mode=ParseMode.HTML, disable_web_page_preview=True,
@@ -919,6 +1232,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     data = q.data or ""
     uid = update.effective_user.id
+    if db.is_blocked(uid) and not is_admin(uid):
+        await q.answer("🚫 You are blocked.", show_alert=True)
+        return
     await q.answer()
 
     parts = data.split(":")
@@ -940,11 +1256,44 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if head == "cat":
         return await show_category(update, context, int(parts[1]),
                                    int(parts[2]))
+    if head == "csort":
+        context.user_data["shop_sort"] = parts[2]
+        return await show_category(update, context, int(parts[1]), 0)
+    if head == "csearch":
+        context.user_data["fsm"] = {"step": "shop_search"}
+        return await render(
+            update, "🔎 Send the product name (or part of it) to search for.",
+            kb([[btn("🚫 Cancel", "shop")]]))
+    if head == "csclr":
+        context.user_data.pop("shop_search", None)
+        return await show_category(update, context, 0, 0)
     if head == "prod":
         return await show_product(update, context, int(parts[1]),
                                   int(parts[2]), int(parts[3]))
+    if head == "favt":
+        pid, cid, page = int(parts[1]), int(parts[2]), int(parts[3])
+        if db.is_favorite(uid, pid):
+            db.remove_favorite(uid, pid)
+        else:
+            db.add_favorite(uid, pid)
+        return await show_product(update, context, pid, cid, page)
+    if head == "favs":
+        return await show_favorites(update, context, int(parts[1]))
+    if head == "refinfo":
+        return await show_referral_info(update, context)
     if head == "buy":
+        context.user_data.pop("checkout_coupon", None)
         return await show_networks(update, context, int(parts[1]))
+    if head == "cpna":
+        pid = int(parts[1])
+        context.user_data["fsm"] = {"step": "coupon_code", "pid": pid}
+        return await render(
+            update, "🎟 Send your coupon code.",
+            kb([[btn("🚫 Cancel", f"buy:{pid}")]]))
+    if head == "cpnrm":
+        pid = int(parts[1])
+        context.user_data.pop("checkout_coupon", None)
+        return await show_networks(update, context, pid)
     if head == "net":
         return await show_payment(update, context, int(parts[1]), parts[2])
     if head == "myorders":
@@ -960,16 +1309,16 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not p or not p["is_active"] or p["stock"] == 0:
             return await render(update, "This product is no longer available.",
                                 kb([[btn("⬅️  Back to shop", "shop")]]))
-        bal = db.get_balance(uid)
-        if bal < p["price"]:
+        if not db.decrement_stock_if_available(pid):
+            return await render(update, "Sold out just now — sorry!",
+                                kb([[btn("⬅️  Back to shop", "shop")]]))
+        if not db.deduct_balance_if_enough(uid, p["price"]):
+            db.restock_one(pid)  # release the reservation, payment failed
             return await render(update, "Insufficient balance.",
                                 kb([[btn("💰 Wallet", "wallet")]]))
-        db.adjust_balance(uid, -p["price"])
         user = update.effective_user
         oid = db.create_order(user.id, user.username, p, "BALANCE", None)
         db.set_order_status(oid, "paid")
-        if p["stock"] > 0:
-            db.update_product(p["id"], stock=p["stock"] - 1)
         o = db.get_order(oid)
         await deliver_order(context, o, p)
         return await render(
@@ -1181,15 +1530,23 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                        int(parts[2]))
     if head == "aov":
         return await show_admin_order(update, context, int(parts[1]))
+    if head == "aub":
+        target_uid, oid = int(parts[1]), int(parts[2])
+        now_blocked = not db.is_blocked(target_uid)
+        db.set_blocked(target_uid, now_blocked)
+        db.log_admin_action(uid, "block_user",
+                            f"user {target_uid} -> {'blocked' if now_blocked else 'unblocked'}")
+        return await show_admin_order(update, context, oid)
 
     if head == "aok":
         oid = int(parts[1])
         o = db.get_order(oid)
         if not o:
             return
-        db.set_order_status(oid, "paid")
+        if not db.set_order_status_from(oid, ("pending", "awaiting_payment"), "paid"):
+            return await show_admin_order(update, context, oid)  # already processed
         p = db.get_product(o["product_id"])
-        if p and p["stock"] > 0:
+        if p and o["network"] != "BALANCE" and p["stock"] > 0:
             db.update_product(p["id"], stock=p["stock"] - 1)
         o = db.get_order(oid)
         await deliver_order(context, o, p)
@@ -1214,6 +1571,55 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Confirmed revenue: <b>{money(db.revenue())} {CURRENCY}</b>"
         )
         return await render(update, txt, kb([[btn("⬅️  Back", "am")]]))
+
+    # ---- admin: coupons
+    if head == "acp":
+        return await show_admin_coupons(update, context, int(parts[1]))
+    if head == "acpn":
+        context.user_data["fsm"] = {"step": "coupon_new_code"}
+        return await render(
+            update, "🎟 Send the new coupon <b>code</b> (letters/numbers).",
+            kb([[btn("🚫 Cancel", "acp:0")]]))
+    if head == "acpv":
+        return await show_admin_coupon(update, context, int(parts[1]))
+    if head == "acpt":
+        cid = int(parts[1])
+        c = db.get_coupon_by_id(cid)
+        if c:
+            db.set_coupon_active(cid, not c["is_active"])
+            db.log_admin_action(uid, "coupon_toggle", c["code"])
+        return await show_admin_coupon(update, context, cid)
+    if head == "acpd":
+        cid = int(parts[1])
+        return await render(
+            update, "Delete this coupon permanently?",
+            kb([[btn("🗑 Yes, delete", f"acpdy:{cid}"),
+                 btn("⬅️ No", f"acpv:{cid}")]]))
+    if head == "acpdy":
+        cid = int(parts[1])
+        c = db.get_coupon_by_id(cid)
+        db.delete_coupon(cid)
+        if c:
+            db.log_admin_action(uid, "coupon_delete", c["code"])
+        return await show_admin_coupons(update, context, 0)
+
+    # ---- admin: manual balance adjust
+    if head == "aadj":
+        context.user_data["fsm"] = {"step": "adj_uid"}
+        return await render(
+            update, "💵 Send the <b>Telegram user ID</b> to adjust balance for.",
+            kb([[btn("🚫 Cancel", "am")]]))
+
+    # ---- admin: search
+    if head == "asrch":
+        context.user_data["fsm"] = {"step": "admin_search"}
+        return await render(
+            update, "🔍 Send a TXID (partial ok) or an exact buyer/user ID.",
+            kb([[btn("🚫 Cancel", "am")]]))
+
+    # ---- admin: log
+    if head == "alog":
+        return await show_admin_log(update, context, int(parts[1]))
 
     if head == "abc":
         context.user_data["fsm"] = {"step": "broadcast"}
@@ -1255,7 +1661,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         t = db.get_topup(tid)
         if not t:
             return
-        db.set_topup_status(tid, "approved")
+        if not db.set_topup_status_from(
+            tid, ("pending", "awaiting_payment"), "approved"
+        ):
+            return await show_admin_topup(update, context, tid)  # already processed
         db.adjust_balance(t["user_id"], t["amount"])
         try:
             await context.bot.send_message(
@@ -1317,10 +1726,28 @@ async def category_picker(update, context):
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     db.upsert_user(u.id, u.username, u.first_name)
+    if db.is_blocked(u.id) and not is_admin(u.id):
+        return
     msg = update.message
     text = (msg.text or msg.caption or "").strip()
     photo_id = msg.photo[-1].file_id if msg.photo else None
     fsm = context.user_data.get("fsm")
+
+    if text in TAB_ROUTES:
+        context.user_data.pop("fsm", None)
+        dest = TAB_ROUTES[text]
+        if dest == "shop":
+            return await show_shop(update, context)
+        if dest == "profile":
+            return await show_profile(update, context)
+        if dest == "wallet":
+            return await show_wallet(update, context)
+        if dest == "myorders:0":
+            return await show_my_orders(update, context, 0)
+        if dest == "support":
+            return await show_support(update, context)
+        if dest == "home":
+            return await show_home(update, context)
 
     if not fsm:
         await msg.reply_text(
@@ -1330,12 +1757,44 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     step = fsm.get("step")
 
+    # ---------- buyer: product search
+    if step == "shop_search":
+        context.user_data.pop("fsm", None)
+        context.user_data["shop_search"] = text[:100]
+        return await show_category(update, context, 0, 0)
+
+    # ---------- buyer: coupon code entry
+    if step == "coupon_code":
+        pid = fsm["pid"]
+        p = db.get_product(pid)
+        context.user_data.pop("fsm", None)
+        if not p:
+            return await show_shop(update, context)
+        coupon, err = db.validate_coupon(text, u.id, p["price"])
+        if err:
+            await msg.reply_text(f"❌ {err}",
+                                 reply_markup=kb([[btn("⬅️ Back", f"buy:{pid}")]]))
+            return
+        discount = db.coupon_discount(coupon, p["price"])
+        context.user_data["checkout_coupon"] = {
+            "pid": pid, "code": coupon["code"], "discount": discount,
+        }
+        await msg.reply_text(
+            f"✅ Coupon <b>{esc(coupon['code'])}</b> applied: "
+            f"-{money(discount)} {CURRENCY}",
+            parse_mode=ParseMode.HTML,
+        )
+        return await show_networks(update, context, pid)
+
     # ---------- buyer: submitting a TXID
     if step == "txid":
         oid = fsm["oid"]
         o = db.get_order(oid)
         if not o or o["user_id"] != u.id:
             context.user_data.pop("fsm", None)
+            return
+        if rate_limited(u.id, "txid"):
+            await msg.reply_text("⏳ Please wait a few seconds and try again.")
             return
         txid = text.split()[0] if text else ""
         if len(txid) < 10:
@@ -1401,6 +1860,9 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not t or t["user_id"] != u.id:
             context.user_data.pop("fsm", None)
             return
+        if rate_limited(u.id, "txid"):
+            await msg.reply_text("⏳ Please wait a few seconds and try again.")
+            return
         txid = text.split()[0] if text else ""
         if len(txid) < 10:
             await msg.reply_text(
@@ -1437,6 +1899,9 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not t or t["user_id"] != u.id or t["status"] != "open":
             context.user_data.pop("fsm", None)
             return
+        if rate_limited(u.id, "ticket_msg"):
+            await msg.reply_text("⏳ Please wait a few seconds before sending another message.")
+            return
         db.add_ticket_message(tid, "user", text or "(no text)")
         await msg.reply_text(
             "✅ Sent to support. You'll be notified here when they reply.",
@@ -1461,8 +1926,12 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == "topup_reject":
         tid = fsm["tid"]
         reason = "" if text == "/skip" else text
-        db.set_topup_status(tid, "rejected", reason or None)
         context.user_data.pop("fsm", None)
+        if not db.set_topup_status_from(
+            tid, ("pending", "awaiting_payment"), "rejected", reason or None
+        ):
+            await msg.reply_text(f"Top-up {topup_code(tid)} already processed.")
+            return
         t = db.get_topup(tid)
         try:
             await context.bot.send_message(
@@ -1499,8 +1968,12 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == "reject":
         oid = fsm["oid"]
         reason = "" if text == "/skip" else text
-        db.set_order_status(oid, "rejected", reason or None)
         context.user_data.pop("fsm", None)
+        if not db.set_order_status_from(
+            oid, ("pending", "awaiting_payment"), "rejected", reason or None
+        ):
+            await msg.reply_text(f"Order {order_code(oid)} already processed.")
+            return
         o = db.get_order(oid)
         try:
             await context.bot.send_message(
@@ -1524,6 +1997,111 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=kb([[btn("💠 Wallets", "aw")],
                              [btn("⚙️ Admin", "am")]]),
         )
+        return
+
+    # ---------- admin: coupon creation wizard
+    if step == "coupon_new_code":
+        code = text.strip().upper()
+        if not code or db.get_coupon(code):
+            await msg.reply_text("That code is empty or already taken. Try another.")
+            return
+        fsm.update(step="coupon_new_kind", code=code)
+        await msg.reply_text(
+            "Discount type — send <b>percent</b> or <b>fixed</b>.",
+            parse_mode=ParseMode.HTML)
+        return
+
+    if step == "coupon_new_kind":
+        kind = text.strip().lower()
+        if kind not in ("percent", "fixed"):
+            await msg.reply_text("Send exactly 'percent' or 'fixed'.")
+            return
+        fsm.update(step="coupon_new_amount", kind=kind)
+        unit = "%" if kind == "percent" else CURRENCY
+        await msg.reply_text(f"Send the discount amount (number, {unit}).")
+        return
+
+    if step == "coupon_new_amount":
+        try:
+            amount = float(text.replace(",", "."))
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await msg.reply_text("Send a positive number.")
+            return
+        fsm.update(step="coupon_new_maxuses", amount=amount)
+        await msg.reply_text(
+            "Max total uses — send a number, or -1 for unlimited.")
+        return
+
+    if step == "coupon_new_maxuses":
+        try:
+            max_uses = int(text)
+        except ValueError:
+            await msg.reply_text("Send a whole number, or -1 for unlimited.")
+            return
+        cid = db.add_coupon(
+            fsm["code"], fsm["kind"], fsm["amount"], max_uses=max_uses,
+        )
+        db.log_admin_action(u.id, "coupon_create", fsm["code"])
+        context.user_data.pop("fsm", None)
+        await msg.reply_text(
+            f"✅ Coupon <b>{esc(fsm['code'])}</b> created.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb([[btn("🎟 Open coupon", f"acpv:{cid}")],
+                             [btn("⚙️ Admin", "am")]]))
+        return
+
+    # ---------- admin: manual balance adjust wizard
+    if step == "adj_uid":
+        try:
+            target_uid = int(text.strip())
+        except ValueError:
+            await msg.reply_text("Send a numeric Telegram user ID.")
+            return
+        fsm.update(step="adj_amount", target_uid=target_uid)
+        bal = db.get_balance(target_uid)
+        await msg.reply_text(
+            f"Current balance for <code>{target_uid}</code>: "
+            f"{money(bal)} {CURRENCY}\n\n"
+            "Send the amount to add (or a negative number to deduct).",
+            parse_mode=ParseMode.HTML)
+        return
+
+    if step == "adj_amount":
+        try:
+            delta = float(text.replace(",", "."))
+            if delta == 0:
+                raise ValueError
+        except ValueError:
+            await msg.reply_text("Send a non-zero number, e.g. 10 or -5.")
+            return
+        target_uid = fsm["target_uid"]
+        new_bal = db.adjust_balance(target_uid, delta)
+        db.log_admin_action(
+            u.id, "adjust_balance",
+            f"user {target_uid} {'+' if delta >= 0 else ''}{delta} -> {new_bal}",
+        )
+        context.user_data.pop("fsm", None)
+        await msg.reply_text(
+            f"✅ Balance updated. New balance: {money(new_bal)} {CURRENCY}",
+            reply_markup=kb([[btn("⚙️ Admin", "am")]]))
+        try:
+            await context.bot.send_message(
+                target_uid,
+                f"💵 Your balance was adjusted by an admin: "
+                f"{'+' if delta >= 0 else ''}{money(delta)} {CURRENCY}.\n"
+                f"New balance: {money(new_bal)} {CURRENCY}.",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return
+
+    # ---------- admin: search
+    if step == "admin_search":
+        term = text.strip()
+        context.user_data.pop("fsm", None)
+        await show_admin_search_result(update, context, term, 0)
         return
 
     if step == "cat_new":

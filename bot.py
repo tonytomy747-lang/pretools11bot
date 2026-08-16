@@ -213,15 +213,18 @@ async def render(update: Update, text: str, markup=None, photo=None):
     query = update.callback_query
     if query is None:
         if photo:
-            await update.effective_chat.send_photo(
-                photo, caption=text, reply_markup=markup,
-                parse_mode=ParseMode.HTML,
-            )
-        else:
-            await update.effective_chat.send_message(
-                text, reply_markup=markup, parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
+            try:
+                await update.effective_chat.send_photo(
+                    photo, caption=text, reply_markup=markup,
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            except BadRequest as e:
+                log.warning("send_photo failed (%s), falling back to text", e)
+        await update.effective_chat.send_message(
+            text, reply_markup=markup, parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
         return
 
     msg = query.message
@@ -253,15 +256,18 @@ async def render(update: Update, text: str, markup=None, photo=None):
     except Exception:  # noqa: BLE001
         pass
     if photo:
-        await update.effective_chat.send_photo(
-            photo, caption=text, reply_markup=markup,
-            parse_mode=ParseMode.HTML,
-        )
-    else:
-        await update.effective_chat.send_message(
-            text, reply_markup=markup, parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
+        try:
+            await update.effective_chat.send_photo(
+                photo, caption=text, reply_markup=markup,
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        except BadRequest as e:
+            log.warning("send_photo failed (%s), falling back to text", e)
+    await update.effective_chat.send_message(
+        text, reply_markup=markup, parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 
 async def notify_admins(context, text, markup=None):
@@ -1294,6 +1300,11 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fname = doc.file_name or ""
     if os.path.splitext(fname)[1].lower() not in IMAGE_MATCH_EXTS:
         await update.message.reply_text(f"⏭️ Skipped (not an image file): {fname}")
+        return
+    if not (doc.mime_type or "").lower().startswith("image/"):
+        await update.message.reply_text(
+            f"⏭️ Skipped (wrong content type, not really an image): {fname}"
+        )
         return
 
     products = db.list_products(only_active=False, limit=10000)

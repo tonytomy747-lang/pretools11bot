@@ -12,7 +12,6 @@ import logging
 import os
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import qrcode
 
@@ -2247,27 +2246,16 @@ async def on_error(update, context):
 
 
 # ----------------------------------------------------------------- runtime
-class Health(BaseHTTPRequestHandler):
-    def do_GET(self):  # noqa: N802
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"ok")
-
-    def do_HEAD(self):  # noqa: N802
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-
-    def log_message(self, *args):
-        pass
-
-
-def start_health_server():
+def start_web_server():
+    """Serves both Render's health check and the browser admin dashboard
+    (see web.py) on the same PORT — no extra hosting/service needed."""
     try:
-        HTTPServer(("0.0.0.0", PORT), Health).serve_forever()
+        import uvicorn
+        import web
+
+        uvicorn.run(web.app, host="0.0.0.0", port=PORT, log_level="warning")
     except Exception as e:  # noqa: BLE001
-        log.warning("health server stopped: %s", e)
+        log.warning("web server stopped: %s", e)
 
 
 async def keepalive():
@@ -2304,7 +2292,7 @@ def main():
             seed.run()
         except Exception as e:  # noqa: BLE001
             log.warning("catalogue seed skipped: %s", e)
-    threading.Thread(target=start_health_server, daemon=True).start()
+    threading.Thread(target=start_web_server, daemon=True).start()
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", cmd_start))

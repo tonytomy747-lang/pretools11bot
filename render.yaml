@@ -15,6 +15,10 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false          # sets the browser admin dashboard password
+      - key: SESSION_SECRET
+        sync: false          # optional; random string, falls back to BOT_TOKEN
       - key: SHOP_NAME
         value: Digital Shop
       - key: CURRENCY

@@ -1249,18 +1249,26 @@ IMAGE_MATCH_TIE_MARGIN = 0.04
 # product title) so list rows get an automatic icon without any manual
 # per-product setup. First match wins, so order matters.
 ICON_KEYWORDS = [
-    ("netflix", "🎬"), ("prime", "🎬"), ("disney", "🎬"), ("hbo", "🎬"),
+    ("netflix", "🎬"), ("prime video", "🎬"), ("disney", "🎬"), ("hbo", "🎬"),
+    ("hulu", "🎬"), ("crunchyroll", "🎬"), ("iptv", "📺"),
     ("spotify", "🎧"), ("apple music", "🎧"), ("soundcloud", "🎧"),
     ("youtube", "▶️"),
-    ("vpn", "🛡️"), ("nord", "🛡️"), ("express", "🛡️"), ("surfshark", "🛡️"),
-    ("gpt", "🤖"), ("openai", "🤖"), ("claude", "🤖"), ("gemini", "🤖"),
-    ("chatgpt", "🤖"), ("copilot", "🤖"), ("anthropic", "🤖"), ("api", "🤖"),
+    ("vpn", "🛡️"), ("nordvpn", "🛡️"), ("nord vpn", "🛡️"),
+    ("expressvpn", "🛡️"), ("surfshark", "🛡️"),
+    ("chatgpt", "🤖"), ("gpt", "🤖"), ("openai", "🤖"),
+    ("claude", "🤖"), ("anthropic", "🤖"),
+    ("gemini", "💎"), ("google ai", "💎"), ("google one", "💎"),
+    ("perplexity", "🔎"),
+    ("copilot", "🤖"), ("midjourney", "🖌️"), ("capcut", "🎞️"),
     ("canva", "🎨"), ("adobe", "🎨"), ("photoshop", "🎨"),
+    ("grammarly", "✍️"), ("envato", "🧩"), ("storyblocks", "🧩"),
     ("office", "📄"), ("microsoft", "📄"), ("windows", "🪟"),
+    ("duolingo", "🦉"), ("linkedin", "💼"),
     ("game", "🎮"), ("steam", "🎮"), ("xbox", "🎮"), ("playstation", "🎮"),
-    ("discord", "💬"), ("telegram", "💬"),
-    ("proxy", "🌐"), ("host", "🌐"), ("domain", "🌐"),
-    ("card", "💳"), ("gift", "🎁"),
+    ("discord", "💬"), ("telegram", "💬"), ("tiktok", "🎵"),
+    ("proxy", "🌐"), ("hosting", "🌐"), ("domain", "🌐"),
+    ("giftcard", "🎁"), ("gift card", "🎁"),
+    ("card", "💳"),
 ]
 DEFAULT_ICON = "📦"
 

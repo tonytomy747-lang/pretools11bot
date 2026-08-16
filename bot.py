@@ -1350,15 +1350,29 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    db.update_product(p["id"], photo_file_id=doc.file_id)
+    # doc.file_id is a *document* file_id — send_photo/InputMediaPhoto can
+    # never accept it ("Can't use file of type document as photo"), even
+    # though the bytes are a real image. Re-send it as a photo once so
+    # Telegram issues a proper photo file_id, then store that instead.
+    try:
+        sent = await update.message.reply_photo(
+            doc.file_id,
+            caption=f"✅ <b>{esc(fname)}</b> → #{p['id']} {esc(title)} ({score:.2f})",
+            parse_mode=ParseMode.HTML,
+        )
+        photo_file_id = sent.photo[-1].file_id
+    except BadRequest as e:
+        await update.message.reply_text(
+            f"❌ <b>{esc(fname)}</b> matched {esc(title)} but Telegram rejected "
+            f"it as an image ({e}). Not saved.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    db.update_product(p["id"], photo_file_id=photo_file_id)
     used_titles.add(title)
     fsm["used_titles"] = list(used_titles)
     context.user_data["fsm"] = fsm
-
-    await update.message.reply_text(
-        f"✅ <b>{esc(fname)}</b> → #{p['id']} {esc(title)} ({score:.2f})",
-        parse_mode=ParseMode.HTML,
-    )
 
 
 # ----------------------------------------------------------------- buttons

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: telegram-usdt-shop
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: BOT_TOKEN
+        sync: false          # set this in the Render dashboard
+      - key: ADMIN_IDS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SHOP_NAME
+        value: Digital Shop
+      - key: CURRENCY
+        value: USDT

@@ -1,0 +1,91 @@
+index,category,product,price_usdt,brand_slug,filename
+1,AI Tools,Gemini Pro 18 Month 5TB,1.20,googlegemini,01_Gemini_Pro_18_Month_5TB.png
+2,AI Tools,Google One Gemini Pro 18M 5TB (Activation Link),0.72,googlegemini,02_Google_One_Gemini_Pro_18M_5TB_Activation_Link.png
+3,AI Tools,Gemini Pro 1 Year 5TB (Old Stable Mail),2.16,googlegemini,03_Gemini_Pro_1_Year_5TB_Old_Stable_Mail.png
+4,AI Tools,Gemini FULL FARM PRO Pixel 1 Year (3-Day Warranty),2.40,googlegemini,04_Gemini_FULL_FARM_PRO_Pixel_1_Year_3_Day_Warranty.png
+5,AI Tools,Google AI Pro 12 Month,18.12,google,05_Google_AI_Pro_12_Month.png
+6,AI Tools,Perplexity PRO 1 Year,32.00,perplexity,06_Perplexity_PRO_1_Year.png
+7,AI Tools,Perplexity Enterprise Pro Seat (1 Month),9.60,perplexity,07_Perplexity_Enterprise_Pro_Seat_1_Month.png
+8,AI Tools,ChatGPT Plus 1 Month (Pre-made Account),1.76,openai,08_ChatGPT_Plus_1_Month_Pre_made_Account.png
+9,AI Tools,ChatGPT Go 3 Month Offer,1.60,openai,09_ChatGPT_Go_3_Month_Offer.png
+10,AI Tools,ChatGPT Plus UPI iCloud Account (7-Day Warranty),2.80,openai,10_ChatGPT_Plus_UPI_iCloud_Account_7_Day_Warranty.png
+11,AI Tools,"Claude 100$ API Credits (30-Day, Firsthand Warranty)",2.80,anthropic,11_Claude_100_API_Credits_30_Day_Firsthand_Warranty.png
+12,AI Tools,"Claude 500$ API Credits (30-Day, Firsthand Warranty)",10.40,anthropic,12_Claude_500_API_Credits_30_Day_Firsthand_Warranty.png
+13,AI Tools,Claude Premium 6.25x 1 Month (25-Day Warranty),61.60,anthropic,13_Claude_Premium_6_25x_1_Month_25_Day_Warranty.png
+14,AI Tools,Claude Premium 1 Month (Firsthand Warranty),56.80,anthropic,14_Claude_Premium_1_Month_Firsthand_Warranty.png
+15,AI Tools,"Claude Premium Seat (1 Month, Firsthand Warranty)",59.40,anthropic,15_Claude_Premium_Seat_1_Month_Firsthand_Warranty.png
+16,AI Tools,Grok 30-Day (5-Day Warranty),1.20,x,16_Grok_30_Day_5_Day_Warranty.png
+17,AI Tools,Grok Super Account (9-10 Days),1.51,x,17_Grok_Super_Account_9_10_Days.png
+18,AI Tools,Gamma Pro 12 Month,24.80,gamma,18_Gamma_Pro_12_Month.png
+19,AI Tools,Manus Pro 12 Month,36.00,manus,19_Manus_Pro_12_Month.png
+20,AI Tools,Higgsfield Pro 12 Month,60.00,higgsfield,20_Higgsfield_Pro_12_Month.png
+21,AI Tools,"Leonardo.ai 8,500 Credits (No Seadance & MiniHead)",4.00,leonardo,21_Leonardo_ai_8_500_Credits_No_Seadance_MiniHead.png
+22,AI Tools,"Heygen Pro 3 Month (Promo, No Warranty)",0.47,heygen,22_Heygen_Pro_3_Month_Promo_No_Warranty.png
+23,AI Tools,QuillBot Premium 1 Month,1.92,quillbot,23_QuillBot_Premium_1_Month.png
+24,AI Tools,ElevenLabs Creator 12 Month,40.00,elevenlabs,24_ElevenLabs_Creator_12_Month.png
+25,AI Tools,Veo 3 Ultra Extension 45K Credits (1 Month / 30-Day Warranty),12.00,google,25_Veo_3_Ultra_Extension_45K_Credits_1_Month_30_Day_Warranty.png
+26,Dev & Productivity,Cursor Pro 12 Month,68.40,cursor,26_Cursor_Pro_12_Month.png
+27,Dev & Productivity,Replit Core 12 Month,25.60,replit,27_Replit_Core_12_Month.png
+28,Dev & Productivity,Railway Hobby 12 Month,13.20,railway,28_Railway_Hobby_12_Month.png
+29,Dev & Productivity,Supabase Pro 12 Month,34.40,supabase,29_Supabase_Pro_12_Month.png
+30,Dev & Productivity,N8N Starter 12 Month,18.40,n8n,30_N8N_Starter_12_Month.png
+31,Dev & Productivity,Notion Business 12 Month,18.80,notion,31_Notion_Business_12_Month.png
+32,Dev & Productivity,Linear Business 12 Month,8.96,linear,32_Linear_Business_12_Month.png
+33,Dev & Productivity,Jam Team 10 Seats 12 Month,26.40,jamboard,33_Jam_Team_10_Seats_12_Month.png
+34,Dev & Productivity,Gumloop Pro 12 Month,7.60,gumroad,34_Gumloop_Pro_12_Month.png
+35,Dev & Productivity,Granola Business 12 Month,6.20,granola,35_Granola_Business_12_Month.png
+36,Dev & Productivity,Granola Business 10 Seats 12 Month,12.00,granola,36_Granola_Business_10_Seats_12_Month.png
+37,Dev & Productivity,PostHog Scale 12 Month,18.40,posthog,37_PostHog_Scale_12_Month.png
+38,Dev & Productivity,Resend Pro 12 Month,28.00,resend,38_Resend_Pro_12_Month.png
+39,Dev & Productivity,Warp Build 12 Month,7.12,warp,39_Warp_Build_12_Month.png
+40,Dev & Productivity,Mobbin 10x Seat 12 Month,12.00,mobbin,40_Mobbin_10x_Seat_12_Month.png
+41,Dev & Productivity,Coursera Premium 12 Month,6.40,coursera,41_Coursera_Premium_12_Month.png
+42,Dev & Productivity,Coursera 1 Year,2.80,coursera,42_Coursera_1_Year.png
+43,Dev & Productivity,Wispr Flow Pro 12 Month,25.60,wispr,43_Wispr_Flow_Pro_12_Month.png
+44,Dev & Productivity,Supercut AI Pro 10 Seats 12 Month,27.20,supercut,44_Supercut_AI_Pro_10_Seats_12_Month.png
+45,Dev & Productivity,Supercut Pro 10 Seat 12 Month,13.60,supercut,45_Supercut_Pro_10_Seat_12_Month.png
+46,Design & Creative,Adobe CC 4 Month (5-Day Warranty),3.27,adobe,46_Adobe_CC_4_Month_5_Day_Warranty.png
+47,Design & Creative,Adobe Express Premium 12M India Activation Link,1.24,adobe,47_Adobe_Express_Premium_12M_India_Activation_Link.png
+48,Design & Creative,Canva Admin 3 Year (2-Week Warranty),11.20,canva,48_Canva_Admin_3_Year_2_Week_Warranty.png
+49,Design & Creative,Canva Edu Pro 1 Year (Unlimited Stock),0.48,canva,49_Canva_Edu_Pro_1_Year_Unlimited_Stock.png
+50,Design & Creative,CapCut Pro 6 Month (5-Day Warranty),11.84,capcut,50_CapCut_Pro_6_Month_5_Day_Warranty.png
+51,Design & Creative,CapCut Pro Team Account (30 Days),2.40,capcut,51_CapCut_Pro_Team_Account_30_Days.png
+52,Design & Creative,CapCut 6 Month Individual,13.20,capcut,52_CapCut_6_Month_Individual.png
+53,Design & Creative,Figma Edu 2 Year (1-Week Warranty),5.60,figma,53_Figma_Edu_2_Year_1_Week_Warranty.png
+54,Design & Creative,Figma EDU (Pro) 1-2 Year,6.00,figma,54_Figma_EDU_Pro_1_2_Year.png
+55,Design & Creative,Framer Pro 12 Month,6.56,framer,55_Framer_Pro_12_Month.png
+56,Design & Creative,Lovable Pro 12 Month,31.92,lovable,56_Lovable_Pro_12_Month.png
+57,Design & Creative,Lovable Pro Lite 12 Month (Link Delivery),6.00,lovable,57_Lovable_Pro_Lite_12_Month_Link_Delivery.png
+58,Design & Creative,Magic Patterns 12 Month,8.40,magicpatterns,58_Magic_Patterns_12_Month.png
+59,Design & Creative,Magic Patterns Starter 12 Month,8.00,magicpatterns,59_Magic_Patterns_Starter_12_Month.png
+60,Design & Creative,Runway Pro 12 Month,42.40,runway,60_Runway_Pro_12_Month.png
+61,Design & Creative,Miro Premium 1-3 Year,0.40,miro,61_Miro_Premium_1_3_Year.png
+62,Design & Creative,Gumloop Pro 12M (Design),7.60,gumroad,62_Gumloop_Pro_12M_Design.png
+63,Streaming & Entertainment,"Netflix Premium 4K 1 Month (Shared, Full Warranty)",2.23,netflix,63_Netflix_Premium_4K_1_Month_Shared_Full_Warranty.png
+64,Streaming & Entertainment,"Netflix Premium 4K 1 Month (Shared, Full Warranty) LINK",1.52,netflix,64_Netflix_Premium_4K_1_Month_Shared_Full_Warranty_LINK.png
+65,Streaming & Entertainment,Netflix Admin 4K 1 Month (No Warranty),2.08,netflix,65_Netflix_Admin_4K_1_Month_No_Warranty.png
+66,Streaming & Entertainment,Prime Video 6 Month (Ads-Free),2.00,primevideo,66_Prime_Video_6_Month_Ads_Free.png
+67,Streaming & Entertainment,Spotify 3 Months (Pre-made Account),2.47,spotify,67_Spotify_3_Months_Pre_made_Account.png
+68,Streaming & Entertainment,Spotify Premium 1 Year (Pre-made Account),14.80,spotify,68_Spotify_Premium_1_Year_Pre_made_Account.png
+69,Streaming & Entertainment,Crunchyroll Premium 1 Month,0.72,crunchyroll,69_Crunchyroll_Premium_1_Month.png
+70,Streaming & Entertainment,Youtube 3 Month Redeem Link (Firsthand Warranty),8.40,youtube,70_Youtube_3_Month_Redeem_Link_Firsthand_Warranty.png
+71,Streaming & Entertainment,Youtube 3 Month Links,1.60,youtube,71_Youtube_3_Month_Links.png
+72,VPN & Security,Nord VPN 3 Month Links,2.80,nordvpn,72_Nord_VPN_3_Month_Links.png
+73,VPN & Security,HMA Android/PC Key (20-30 Days),0.39,hide-my-ass,73_HMA_Android_PC_Key_20_30_Days.png
+74,VPN & Security,"HMA Android/PC Key (20-30 Days, Alt Listing)",0.72,hide-my-ass,74_HMA_Android_PC_Key_20_30_Days_Alt_Listing.png
+75,VPN & Security,SurfShark 2 Month Account (Firsthand Warranty),2.36,surfshark,75_SurfShark_2_Month_Account_Firsthand_Warranty.png
+76,VPN & Security,SurfShark VPN 2 Month Coupon,2.32,surfshark,76_SurfShark_VPN_2_Month_Coupon.png
+77,VPN & Security,ExpressVPN Account (25-30 Days),0.80,expressvpn,77_ExpressVPN_Account_25_30_Days.png
+78,Business & LinkedIn,LinkedIn Business 12 Month (Firsthand Warranty),43.20,linkedin,78_LinkedIn_Business_12_Month_Firsthand_Warranty.png
+79,Business & LinkedIn,LinkedIn Business 2 Month New User (Firsthand Warranty),3.68,linkedin,79_LinkedIn_Business_2_Month_New_User_Firsthand_Warranty.png
+80,Business & LinkedIn,LinkedIn Career 12 Month (Firsthand Warranty),28.72,linkedin,80_LinkedIn_Career_12_Month_Firsthand_Warranty.png
+81,Business & LinkedIn,LinkedIn Career 2 Month New User (Firsthand Warranty),3.36,linkedin,81_LinkedIn_Career_2_Month_New_User_Firsthand_Warranty.png
+82,Business & LinkedIn,LinkedIn Career 3 Month (New Accounts Only),1.04,linkedin,82_LinkedIn_Career_3_Month_New_Accounts_Only.png
+83,Business & LinkedIn,LinkedIn Sales Navigator 2 Month New User,3.60,linkedin,83_LinkedIn_Sales_Navigator_2_Month_New_User.png
+84,Business & LinkedIn,Microsoft 365 Family 10 Month,8.00,microsoft,84_Microsoft_365_Family_10_Month.png
+85,Business & LinkedIn,Microsoft 365 1 Year Premium,1.80,microsoft,85_Microsoft_365_1_Year_Premium.png
+86,Business & LinkedIn,I Love PDF 1 Year,1.60,ilovepdf,86_I_Love_PDF_1_Year.png
+87,Business & LinkedIn,Outlook Mails,0.07,microsoftoutlook,87_Outlook_Mails.png
+88,Business & LinkedIn,Fresh iCloud Mail,0.10,icloud,88_Fresh_iCloud_Mail.png
+89,Business & LinkedIn,2FA Fresh Gmail,0.80,gmail,89_2FA_Fresh_Gmail.png
+90,Business & LinkedIn,2FA Gmail 2023-2024,1.20,gmail,90_2FA_Gmail_2023_2024.png

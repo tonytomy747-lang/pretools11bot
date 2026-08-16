@@ -9,18 +9,22 @@ Set DASHBOARD_PASSWORD in your host's dashboard/env, same place as BOT_TOKEN.
 import os
 import time
 
+import httpx
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 
 import db
 
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "").strip()
-SESSION_SECRET = os.getenv("SESSION_SECRET", "").strip() or os.getenv(
-    "BOT_TOKEN", "dev-secret-change-me"
-)
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+SESSION_SECRET = os.getenv("SESSION_SECRET", "").strip() or BOT_TOKEN or "dev-secret-change-me"
 SHOP_NAME = os.getenv("SHOP_NAME", "Digital Shop")
 PAGE_SIZE = 20
+
+# tiny in-memory cache for product photo bytes: pid -> (bytes, content_type, ts)
+_IMG_CACHE = {}
+_IMG_CACHE_TTL = 3600
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax")
@@ -68,6 +72,8 @@ table {{ width:100%; border-collapse:collapse; background:#171a21; border:1px so
 th, td {{ text-align:left; padding:0.55rem 0.8rem; border-bottom:1px solid #21252e; }}
 th {{ color:#9aa2ad; font-weight:600; font-size:0.76rem; text-transform:uppercase; letter-spacing:.03em; }}
 tr:last-child td {{ border-bottom:none; }}
+.thumb {{ width:40px; height:40px; object-fit:cover; border-radius:6px; display:block; background:#0f1115; }}
+.thumb-empty {{ color:#5a6170; }}
 .badge {{ display:inline-block; padding:0.15rem 0.5rem; border-radius:99px; font-size:0.74rem; font-weight:600; }}
 .b-paid, .b-approved {{ background:#123d24; color:#5fd88a; }}
 .b-pending {{ background:#3d3312; color:#e8c25a; }}
@@ -254,6 +260,38 @@ def money(v):
 
 
 # --------------------------------------------------------------- products
+@app.get("/products/{pid}/image")
+def product_image(request: Request, pid: int):
+    if (r := guard(request)) is not None:
+        return r
+    cached = _IMG_CACHE.get(pid)
+    if cached and time.time() - cached[2] < _IMG_CACHE_TTL:
+        return Response(content=cached[0], media_type=cached[1])
+
+    p = db.get_product(pid)
+    file_id = p["photo_file_id"] if p else None
+    if not file_id or not BOT_TOKEN:
+        return Response(status_code=404)
+
+    try:
+        with httpx.Client(timeout=10) as client:
+            meta = client.get(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/getFile",
+                params={"file_id": file_id},
+            ).json()
+            file_path = meta.get("result", {}).get("file_path")
+            if not file_path:
+                return Response(status_code=404)
+            file_resp = client.get(
+                f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+            )
+            content_type = file_resp.headers.get("content-type", "image/jpeg")
+            _IMG_CACHE[pid] = (file_resp.content, content_type, time.time())
+            return Response(content=file_resp.content, media_type=content_type)
+    except httpx.HTTPError:
+        return Response(status_code=502)
+
+
 @app.get("/products", response_class=HTMLResponse)
 def products_list(request: Request, page_no: int = 0):
     if (r := guard(request)) is not None:
@@ -262,7 +300,8 @@ def products_list(request: Request, page_no: int = 0):
     items = db.list_products(only_active=False, limit=PAGE_SIZE, offset=page_no * PAGE_SIZE)
     cats = {c["id"]: c["name"] for c in db.list_categories()}
     rows = "".join(
-        f"<tr><td class='mono'>{p['id']}</td><td>{esc(p['title'])}</td>"
+        f"<tr><td>{'<img class=\"thumb\" src=\"/products/' + str(p['id']) + '/image\" alt=\"\">' if p['photo_file_id'] else '<span class=\"thumb-empty\">—</span>'}</td>"
+        f"<td class='mono'>{p['id']}</td><td>{esc(p['title'])}</td>"
         f"<td>{esc(cats.get(p['category_id'], '—'))}</td>"
         f"<td>{money(p['price'])}</td>"
         f"<td>{'∞' if p['stock'] < 0 else p['stock']}</td>"
@@ -275,8 +314,8 @@ def products_list(request: Request, page_no: int = 0):
     )
     body = f"""
     <div class="toolbar"><span class="muted">{total} products</span></div>
-    <table><thead><tr><th>ID</th><th>Title</th><th>Category</th><th>Price</th><th>Stock</th><th>Active</th><th></th></tr></thead>
-    <tbody>{rows or '<tr><td colspan=7 class="muted">No products.</td></tr>'}</tbody></table>
+    <table><thead><tr><th></th><th>ID</th><th>Title</th><th>Category</th><th>Price</th><th>Stock</th><th>Active</th><th></th></tr></thead>
+    <tbody>{rows or '<tr><td colspan=8 class="muted">No products.</td></tr>'}</tbody></table>
     {pager('/products', page_no, total, PAGE_SIZE)}
     <p class="muted">Add / edit products from the bot's Telegram admin panel (needs photo upload) — this page manages visibility and stock.</p>
     """

@@ -6,10 +6,12 @@ Postgres/SQLite holds the data, and payment verification is done by you.
 """
 
 import asyncio
+import difflib
 import html
 import io
 import logging
 import os
+import re
 import threading
 import time
 
@@ -1226,6 +1228,128 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ------------------------------------------------------ bulk image matching
+# Admin runs /matchimages, then sends product images as FILES (Telegram
+# "File" attach, not "Photo" — must stay uncompressed so the original
+# filename survives), one at a time or in a batch. Each incoming file's
+# name is fuzzy-matched against product titles and the photo is attached
+# automatically. /matchimages done (or /cancel) ends the session.
+IMAGE_MATCH_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+IMAGE_MATCH_THRESHOLD = 0.55
+IMAGE_MATCH_TIE_MARGIN = 0.04
+
+
+def _im_normalize(text: str) -> str:
+    text = os.path.splitext(text)[0]
+    text = re.sub(r"^\d+[_\-\s]*", "", text)
+    text = re.sub(r"[_\-]+", " ", text)
+    text = re.sub(r"[^a-z0-9 ]", " ", text.lower())
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _im_best_match(norm_name: str, titles: list):
+    scored = sorted(
+        ((t, difflib.SequenceMatcher(None, norm_name, _im_normalize(t)).ratio()) for t in titles),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    best_title, best_score = scored[0]
+    second_score = scored[1][1] if len(scored) > 1 else 0.0
+    return best_title, best_score, second_score
+
+
+async def cmd_matchimages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("You are not an admin.")
+        return
+
+    arg = (context.args[0].lower() if context.args else "")
+    if arg in ("done", "stop", "end"):
+        context.user_data.pop("fsm", None)
+        await update.message.reply_text("Image-matching session ended.")
+        return
+
+    overwrite = arg == "overwrite"
+    context.user_data["fsm"] = {"step": "matchimages_wait", "overwrite": overwrite,
+                                 "used_titles": []}
+    await update.message.reply_text(
+        "📥 Send product images now as <b>Files</b> (attach → File, not Photo, "
+        "so the filename is preserved) — one at a time or several in a row.\n\n"
+        "Each file's name is matched to a product title automatically.\n"
+        f"Overwrite existing photos: {'yes' if overwrite else 'no'} "
+        "(use /matchimages overwrite to replace existing photos).\n\n"
+        "Send /matchimages done when finished.",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    fsm = context.user_data.get("fsm") or {}
+    if fsm.get("step") != "matchimages_wait" or not is_admin(u.id):
+        return
+
+    doc = update.message.document
+    fname = doc.file_name or ""
+    if os.path.splitext(fname)[1].lower() not in IMAGE_MATCH_EXTS:
+        await update.message.reply_text(f"⏭️ Skipped (not an image file): {fname}")
+        return
+
+    products = db.list_products(only_active=False, limit=10000)
+    if not products:
+        await update.message.reply_text("No products in DB.")
+        return
+    titles = [p["title"] for p in products]
+    by_title = {p["title"]: p for p in products}
+
+    used_titles = set(fsm.get("used_titles", []))
+    overwrite = fsm.get("overwrite", False)
+
+    norm = _im_normalize(fname)
+    title, score, second = _im_best_match(norm, titles)
+    p = by_title[title]
+
+    if title in used_titles:
+        await update.message.reply_text(
+            f"⚠️ Ambiguous: <b>{esc(fname)}</b> best guess {esc(title)} "
+            f"({score:.2f}) but that title already got an image this session.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    if score < IMAGE_MATCH_THRESHOLD:
+        await update.message.reply_text(
+            f"❓ No confident match for <b>{esc(fname)}</b> "
+            f"(closest: {esc(title)}, {score:.2f}). Not saved.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    if score - second < IMAGE_MATCH_TIE_MARGIN:
+        await update.message.reply_text(
+            f"⚠️ Ambiguous match for <b>{esc(fname)}</b>: {esc(title)} "
+            f"({score:.2f}) too close to runner-up ({second:.2f}). Not saved.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    if p["photo_file_id"] and not overwrite:
+        await update.message.reply_text(
+            f"⏭️ Skipped: <b>{esc(title)}</b> already has a photo "
+            "(/matchimages overwrite to replace).",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    db.update_product(p["id"], photo_file_id=doc.file_id)
+    used_titles.add(title)
+    fsm["used_titles"] = list(used_titles)
+    context.user_data["fsm"] = fsm
+
+    await update.message.reply_text(
+        f"✅ <b>{esc(fname)}</b> → #{p['id']} {esc(title)} ({score:.2f})",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 # ----------------------------------------------------------------- buttons
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -2300,7 +2424,9 @@ def main():
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
+    app.add_handler(CommandHandler("matchimages", cmd_matchimages))
     app.add_handler(CallbackQueryHandler(on_button))
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.COMMAND, on_document))
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, on_message))
     app.add_handler(MessageHandler(

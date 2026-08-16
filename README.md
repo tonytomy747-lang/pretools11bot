@@ -19,6 +19,11 @@ after deploying.
 - Copy-tappable wallet address + a clear "wrong network = lost funds" warning
 - "I have paid" → submits TXID → order goes under review
 - "My orders" list with live status
+- **Profile screen**: balance, orders placed, total spent, open ticket status
+- **Wallet top-up**: add USDT balance (same TXID → admin-approve flow as orders),
+  then pay for any product instantly from balance — no waiting, no TXID
+- **Support tickets**: opens a persistent two-way thread inside the same chat;
+  admin replies land back on the buyer instantly, no external group needed
 
 **For you (admin)**
 - Add / edit / hide / delete products, all from chat
@@ -31,6 +36,12 @@ after deploying.
   it the second you tap Approve
 - Stock counters (auto-decrement), broadcast to all users, stats, editable
   welcome text and support handle
+- **Topups queue**: approve/reject wallet top-ups the same way as orders;
+  approving credits the buyer's balance and notifies them
+- **Tickets inbox**: see open/closed tickets, reply from the admin panel —
+  your reply is delivered straight to the buyer's chat
+- **Sample catalogue seeder** (`python seed.py`) — one command populates ~90
+  ready-made digital products across 6 categories to get the shop started
 
 **Cost: $0.** Render free tier + Supabase free Postgres + Telegram's own image
 hosting. No credit card required anywhere.
@@ -170,6 +181,22 @@ Open your bot and send `/start`, then tap **⚙️ Admin panel**.
    Send `/skip` on any optional step.
 4. **📝 Texts** → customise the welcome message and your support handle.
 
+### Seeding sample products
+
+The bot seeds its ~90-product sample catalogue **automatically on every
+boot** — including every Render deploy — so a fresh deployment already has a
+full shop without any manual step. It creates 6 categories and ~90 products
+(AI tools, dev/productivity, design/creative, streaming, VPN,
+business/LinkedIn) with descriptions and prices already set. It's idempotent:
+matched by product name, so it only ever adds what's missing (safe across
+restarts and redeploys, won't duplicate or touch products you've already
+edited). No images are attached (the source had none to reuse); add real
+photos per-product via **📦 Products → (pick one) → 🖼 Image**.
+
+Set `SEED_ON_BOOT=false` in your environment variables to turn this off (e.g.
+once your own catalogue has replaced the sample one). You can also still run
+it by hand any time: `python seed.py`.
+
 ### Step 6 — Test it end to end (2 min)
 
 From a second Telegram account (or your own — you can buy from your own shop):
@@ -245,6 +272,7 @@ docker run -d --restart always --env-file .env -v $PWD/data:/app tgshop
 | `CURRENCY` | | `USDT` | Label only; change if you take something else |
 | `SQLITE_PATH` | | `shop.db` | Only used when `DATABASE_URL` is empty |
 | `PORT` | | `8080` | Health endpoint port; hosts set this for you |
+| `SEED_ON_BOOT` | | `true` | Auto-runs `seed.py` on every startup. Set `false` to disable once you have your own catalogue |
 
 Changing wallets, texts, products or categories does **not** require touching
 these — that's all done in the admin panel.
@@ -349,4 +377,5 @@ itself there.
   panel, no redeploy needed.
 
 Files: `bot.py` (screens + handlers), `db.py` (storage, SQLite and Postgres),
-`render.yaml` / `Dockerfile` / `Procfile` (deployment targets).
+`seed.py` (one-time sample catalogue seeder), `render.yaml` / `Dockerfile` /
+`Procfile` (deployment targets).

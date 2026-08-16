@@ -128,7 +128,37 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT,
     first_name TEXT,
     joined_at TEXT,
-    is_blocked INTEGER DEFAULT 0
+    is_blocked INTEGER DEFAULT 0,
+    balance REAL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS topups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    amount REAL,
+    network TEXT,
+    address TEXT,
+    txid TEXT,
+    status TEXT,
+    note TEXT,
+    created_at TEXT,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    status TEXT DEFAULT 'open',
+    last_msg_preview TEXT,
+    created_at TEXT,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS ticket_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER,
+    sender TEXT,
+    body TEXT,
+    created_at TEXT
 );
 """
 
@@ -176,9 +206,56 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT,
     first_name TEXT,
     joined_at TEXT,
-    is_blocked INTEGER DEFAULT 0
+    is_blocked INTEGER DEFAULT 0,
+    balance DOUBLE PRECISION DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS topups (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT,
+    username TEXT,
+    amount DOUBLE PRECISION,
+    network TEXT,
+    address TEXT,
+    txid TEXT,
+    status TEXT,
+    note TEXT,
+    created_at TEXT,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS tickets (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT,
+    username TEXT,
+    status TEXT DEFAULT 'open',
+    last_msg_preview TEXT,
+    created_at TEXT,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS ticket_messages (
+    id SERIAL PRIMARY KEY,
+    ticket_id INTEGER,
+    sender TEXT,
+    body TEXT,
+    created_at TEXT
 );
 """
+
+
+def _sqlite_has_column(table, col):
+    rows = execute(f"PRAGMA table_info({table})", (), "all")
+    return any(r["name"] == col for r in rows)
+
+
+def _pg_has_column(table, col):
+    row = execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = %s AND column_name = %s" if IS_PG else
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = ? AND column_name = ?",
+        (table, col),
+        "one",
+    )
+    return bool(row)
 
 
 def init():
@@ -188,6 +265,20 @@ def init():
     execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
     execute("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)")
     execute("CREATE INDEX IF NOT EXISTS idx_products_cat ON products(category_id)")
+    execute("CREATE INDEX IF NOT EXISTS idx_topups_status ON topups(status)")
+    execute("CREATE INDEX IF NOT EXISTS idx_topups_user ON topups(user_id)")
+    execute("CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id)")
+    execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
+    execute("CREATE INDEX IF NOT EXISTS idx_tmsg_ticket ON ticket_messages(ticket_id)")
+
+    # migration: older DBs created before `balance` existed on users
+    has_balance = (
+        _sqlite_has_column("users", "balance") if not IS_PG
+        else _pg_has_column("users", "balance")
+    )
+    if not has_balance:
+        col_type = "DOUBLE PRECISION" if IS_PG else "REAL"
+        execute(f"ALTER TABLE users ADD COLUMN balance {col_type} DEFAULT 0")
 
 
 # ---------------------------------------------------------------- settings
@@ -426,3 +517,185 @@ def revenue():
         "one",
     )
     return float(row["s"] or 0)
+
+
+def user_spent(user_id):
+    row = execute(
+        "SELECT COALESCE(SUM(price), 0) AS s FROM orders "
+        "WHERE status = 'paid' AND user_id = ?",
+        (user_id,),
+        "one",
+    )
+    return float(row["s"] or 0)
+
+
+# ---------------------------------------------------------------- balance
+def get_balance(user_id):
+    row = execute("SELECT balance FROM users WHERE user_id = ?", (user_id,), "one")
+    return float(row["balance"] or 0) if row else 0.0
+
+
+def adjust_balance(user_id, delta):
+    """Atomically add delta (can be negative) to a user's balance."""
+    with _lock:
+        execute(
+            "UPDATE users SET balance = COALESCE(balance, 0) + ? WHERE user_id = ?",
+            (delta, user_id),
+        )
+    return get_balance(user_id)
+
+
+# ---------------------------------------------------------------- topups
+def create_topup(user_id, username, amount, network, address):
+    row = execute(
+        """
+        INSERT INTO topups
+            (user_id, username, amount, network, address, txid, status, note,
+             created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, NULL, 'awaiting_payment', NULL, ?, ?)
+        RETURNING id
+        """,
+        (user_id, username, amount, network, address, now(), now()),
+        "one",
+    )
+    return row["id"]
+
+
+def get_topup(tid):
+    return execute("SELECT * FROM topups WHERE id = ?", (tid,), "one")
+
+
+def set_topup_txid(tid, txid):
+    execute(
+        "UPDATE topups SET txid = ?, status = 'pending', updated_at = ? "
+        "WHERE id = ?",
+        (txid, now(), tid),
+    )
+
+
+def set_topup_status(tid, status, note=None):
+    execute(
+        "UPDATE topups SET status = ?, note = ?, updated_at = ? WHERE id = ?",
+        (status, note, now(), tid),
+    )
+
+
+def topup_txid_exists(txid):
+    return bool(execute("SELECT 1 FROM topups WHERE txid = ?", (txid,), "one"))
+
+
+def list_topups(status=None, user_id=None, limit=10, offset=0):
+    where, params = [], []
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    if user_id:
+        where.append("user_id = ?")
+        params.append(user_id)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    params += [limit, offset]
+    return execute(
+        f"SELECT * FROM topups {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+        params,
+        "all",
+    )
+
+
+def count_topups(status=None, user_id=None):
+    where, params = [], []
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    if user_id:
+        where.append("user_id = ?")
+        params.append(user_id)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    return execute(
+        f"SELECT COUNT(*) AS c FROM topups {clause}", params, "one"
+    )["c"]
+
+
+# ---------------------------------------------------------------- tickets
+def create_ticket(user_id, username):
+    row = execute(
+        """
+        INSERT INTO tickets (user_id, username, status, last_msg_preview,
+                              created_at, updated_at)
+        VALUES (?, ?, 'open', NULL, ?, ?)
+        RETURNING id
+        """,
+        (user_id, username, now(), now()),
+        "one",
+    )
+    return row["id"]
+
+
+def get_ticket(tid):
+    return execute("SELECT * FROM tickets WHERE id = ?", (tid,), "one")
+
+
+def get_open_ticket(user_id):
+    return execute(
+        "SELECT * FROM tickets WHERE user_id = ? AND status = 'open' "
+        "ORDER BY id DESC LIMIT 1",
+        (user_id,),
+        "one",
+    )
+
+
+def close_ticket(tid):
+    execute(
+        "UPDATE tickets SET status = 'closed', updated_at = ? WHERE id = ?",
+        (now(), tid),
+    )
+
+
+def touch_ticket(tid, preview):
+    execute(
+        "UPDATE tickets SET last_msg_preview = ?, updated_at = ? WHERE id = ?",
+        (preview[:120], now(), tid),
+    )
+
+
+def list_tickets(status=None, limit=10, offset=0):
+    where, params = [], []
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    params += [limit, offset]
+    return execute(
+        f"SELECT * FROM tickets {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+        params,
+        "all",
+    )
+
+
+def count_tickets(status=None):
+    where, params = [], []
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    return execute(
+        f"SELECT COUNT(*) AS c FROM tickets {clause}", params, "one"
+    )["c"]
+
+
+def add_ticket_message(ticket_id, sender, body):
+    execute(
+        "INSERT INTO ticket_messages (ticket_id, sender, body, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (ticket_id, sender, body, now()),
+    )
+    touch_ticket(ticket_id, body)
+
+
+def list_ticket_messages(ticket_id, limit=20):
+    rows = execute(
+        "SELECT * FROM ticket_messages WHERE ticket_id = ? "
+        "ORDER BY id DESC LIMIT ?",
+        (ticket_id, limit),
+        "all",
+    )
+    return list(reversed(rows))

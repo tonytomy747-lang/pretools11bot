@@ -55,6 +55,9 @@ ADMIN_IDS = {
 SHOP_NAME = os.getenv("SHOP_NAME", "Digital Shop")
 CURRENCY = os.getenv("CURRENCY", "USDT")
 PORT = int(os.getenv("PORT", "8080"))
+SEED_ON_BOOT = os.getenv("SEED_ON_BOOT", "true").strip().lower() not in (
+    "0", "false", "no", "off",
+)
 
 PAGE_SIZE = 6
 ADMIN_PAGE_SIZE = 8
@@ -77,11 +80,20 @@ STATUS_LABEL = {
     "cancelled": "🚫 Cancelled",
 }
 
+TOPUP_STATUS_LABEL = {
+    "awaiting_payment": "🕗 Awaiting payment",
+    "pending": "🔎 Under review",
+    "approved": "✅ Credited",
+    "rejected": "❌ Rejected",
+    "cancelled": "🚫 Cancelled",
+}
+
 DEFAULT_WELCOME = (
     "Welcome to <b>{shop}</b>.\n\n"
     "Browse the catalogue, pick a product and pay with USDT on the network "
-    "you prefer. After you send the payment, submit your transaction hash "
-    "and an admin will confirm your order."
+    "you prefer, or top up your wallet balance and check out instantly. "
+    "After you send a payment, submit your transaction hash and an admin "
+    "will confirm it."
 )
 
 
@@ -100,6 +112,10 @@ def is_admin(user_id: int) -> bool:
 
 def order_code(oid: int) -> str:
     return f"#{int(oid):05d}"
+
+
+def topup_code(tid: int) -> str:
+    return f"TU-{int(tid):05d}"
 
 
 def kb(rows):
@@ -204,11 +220,34 @@ async def notify_admins(context, text, markup=None):
 def main_menu_markup(user_id):
     rows = [
         [btn("🛍  Browse shop", "shop")],
+        [btn("👤  Profile", "profile"), btn("💰  Wallet", "wallet")],
         [btn("🧾  My orders", "myorders:0"), btn("💬  Support", "support")],
     ]
     if is_admin(user_id):
         rows.append([btn("⚙️  Admin panel", "am")])
     return kb(rows)
+
+
+async def deliver_order(context, o, p):
+    """Send the buyer their confirmation + auto-delivery content, if any.
+
+    Shared by admin-approve (crypto orders) and instant balance checkout.
+    """
+    msg = (
+        f"✅ <b>Payment confirmed</b> — order {order_code(o['id'])}\n\n"
+        f"Product: <b>{esc(o['product_title'])}</b>\n"
+        f"Amount: {money(o['price'])} {CURRENCY} ({esc(o['network'])})\n\n"
+    )
+    if p and p["delivery_content"]:
+        msg += "Here is your product:\n\n" + esc(p["delivery_content"])
+    else:
+        msg += "An admin will deliver your product shortly."
+    try:
+        await context.bot.send_message(o["user_id"], msg,
+                                       parse_mode=ParseMode.HTML,
+                                       disable_web_page_preview=True)
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not notify buyer %s: %s", o["user_id"], e)
 
 
 def welcome_text():
@@ -324,7 +363,9 @@ async def show_networks(update, context, pid: int):
         return
 
     wallets = configured_wallets()
-    if not wallets:
+    uid = update.effective_user.id
+    bal = db.get_balance(uid)
+    if not wallets and bal < p["price"]:
         await render(
             update,
             "⚠️ No payment wallets are configured yet.\n"
@@ -333,14 +374,19 @@ async def show_networks(update, context, pid: int):
         )
         return
 
-    rows = [[btn(f"💠 {label}", f"net:{pid}:{code}")]
-            for code, label, _ in wallets]
+    rows = []
+    if bal >= p["price"]:
+        rows.append([btn(f"💰 Pay from balance ({money(bal)} {CURRENCY})",
+                         f"balpay:{pid}")])
+    rows += [[btn(f"💠 {label}", f"net:{pid}:{code}")]
+             for code, label, _ in wallets]
     rows.append([btn("⬅️  Back", f"prod:{pid}:0:0")])
 
     txt = (
         f"<b>{esc(p['title'])}</b>\n"
-        f"Amount: <b>{money(p['price'])} {CURRENCY}</b>\n\n"
-        "Choose the network you want to pay on:"
+        f"Amount: <b>{money(p['price'])} {CURRENCY}</b>\n"
+        f"Your balance: {money(bal)} {CURRENCY}\n\n"
+        "Choose how you want to pay:"
     )
     await render(update, txt, kb(rows))
 
@@ -399,29 +445,197 @@ async def show_my_orders(update, context, page: int):
     await render(update, "\n".join(lines), kb(rows))
 
 
-async def show_support(update, context):
-    handle = db.get_setting("support", "")
-    txt = "💬 <b>Support</b>\n\n"
-    if handle:
-        txt += f"Contact: {esc(handle)}\n\n"
-    txt += (
-        "Payments are checked manually. After you submit your TXID an admin "
-        "reviews it, usually within a few hours. Your Telegram ID is "
-        f"<code>{update.effective_user.id}</code> — include it when you "
-        "message support."
+# ----------------------------------------------------------------- profile
+async def show_profile(update, context):
+    u = update.effective_user
+    urow = db.execute("SELECT * FROM users WHERE user_id = ?", (u.id,), "one")
+    bal = db.get_balance(u.id)
+    orders_n = db.count_orders(user_id=u.id)
+    spent = db.user_spent(u.id)
+    ticket = db.get_open_ticket(u.id)
+
+    txt = (
+        f"👤 <b>Your profile</b>\n\n"
+        f"Name: {esc(u.first_name or '—')}\n"
+        f"Username: {('@' + esc(u.username)) if u.username else '—'}\n"
+        f"Telegram ID: <code>{u.id}</code>\n"
+        f"Member since: {esc(urow['joined_at']) if urow else '—'}\n\n"
+        f"💰 Wallet balance: <b>{money(bal)} {CURRENCY}</b>\n"
+        f"🧾 Orders placed: <b>{orders_n}</b>\n"
+        f"💵 Total spent: <b>{money(spent)} {CURRENCY}</b>\n"
     )
-    await render(update, txt, kb([[btn("🏠  Home", "home")]]))
+    if ticket:
+        txt += "\n🎫 You have an open support ticket."
+
+    rows = [
+        [btn("💰  Wallet", "wallet"), btn("🧾  My orders", "myorders:0")],
+        [btn("💬  Support", "support")],
+        [btn("🏠  Home", "home")],
+    ]
+    await render(update, txt, kb(rows))
+
+
+# ----------------------------------------------------------------- wallet
+async def show_wallet(update, context):
+    uid = update.effective_user.id
+    bal = db.get_balance(uid)
+    pending = db.count_topups(status="pending", user_id=uid)
+    txt = (
+        f"💰 <b>Your wallet</b>\n\n"
+        f"Balance: <b>{money(bal)} {CURRENCY}</b>\n"
+    )
+    if pending:
+        txt += f"🔎 {pending} top-up(s) under review.\n"
+    txt += "\nTop up your balance to check out instantly, no waiting."
+    rows = [
+        [btn("➕  Top up", "topup")],
+        [btn("🧾  Top-up history", "tuh:0")],
+        [btn("🛍  Shop", "shop"), btn("🏠  Home", "home")],
+    ]
+    await render(update, txt, kb(rows))
+
+
+async def start_topup(update, context):
+    context.user_data["fsm"] = {"step": "topup_amount"}
+    await render(
+        update,
+        f"➕ <b>Top up wallet</b>\n\nSend the amount in {CURRENCY} you want "
+        "to add (e.g. 20 or 50.5).",
+        kb([[btn("🚫 Cancel", "wallet")]]),
+    )
+
+
+async def show_topup_networks(update, context):
+    fsm = context.user_data.get("fsm") or {}
+    amount = fsm.get("amount")
+    if not amount:
+        return await show_wallet(update, context)
+    wallets = configured_wallets()
+    if not wallets:
+        await render(
+            update,
+            "⚠️ No payment wallets are configured yet.\nPlease contact support.",
+            kb([[btn("⬅️  Back", "wallet")]]),
+        )
+        return
+    rows = [[btn(f"💠 {label}", f"topnet:{code}")] for code, label, _ in wallets]
+    rows.append([btn("⬅️  Back", "wallet")])
+    txt = (
+        f"➕ <b>Top up</b>\nAmount: <b>{money(amount)} {CURRENCY}</b>\n\n"
+        "Choose the network you want to pay on:"
+    )
+    await render(update, txt, kb(rows))
+
+
+async def show_topup_payment(update, context, net: str):
+    fsm = context.user_data.get("fsm") or {}
+    amount = fsm.get("amount")
+    user = update.effective_user
+    address = db.get_setting(f"wallet_{net}")
+    if not amount or not address:
+        await render(update, "Something went wrong. Please start again.",
+                     kb([[btn("💰  Wallet", "wallet")]]))
+        return
+
+    tid = db.create_topup(user.id, user.username, amount, net, address)
+    context.user_data["fsm"] = {"step": "topup_txid", "tid": tid}
+
+    txt = (
+        f"🧾 <b>Top-up {topup_code(tid)}</b>\n\n"
+        f"Amount: <b>{money(amount)} {CURRENCY}</b>\n"
+        f"Network: <b>{esc(NET_LABEL.get(net, net))}</b>\n\n"
+        f"Send exactly <b>{money(amount)} {CURRENCY}</b> to this address:\n"
+        f"<code>{esc(address)}</code>\n"
+        "<i>(tap the address to copy)</i>\n\n"
+        "⚠️ Send only USDT on the "
+        f"<b>{esc(net)}</b> network. Funds sent on another network are lost.\n\n"
+        "When the transfer is done, tap <b>I have paid</b> and send your "
+        "transaction hash (TXID)."
+    )
+    rows = [
+        [btn("✅  I have paid", f"tpaid:{tid}")],
+        [btn("🚫  Cancel", f"tcxl:{tid}")],
+    ]
+    await render(update, txt, kb(rows))
+
+
+async def show_topup_history(update, context, page: int):
+    uid = update.effective_user.id
+    total = db.count_topups(user_id=uid)
+    items = db.list_topups(user_id=uid, limit=5, offset=page * 5)
+    if not total:
+        await render(update, "You have no top-ups yet.",
+                     kb([[btn("➕  Top up", "topup")],
+                         [btn("💰  Wallet", "wallet")]]))
+        return
+    lines = ["🧾 <b>Your top-ups</b>", ""]
+    for t in items:
+        lines.append(
+            f"{topup_code(t['id'])} · <b>{money(t['amount'])} {CURRENCY}</b>\n"
+            f"     {esc(t['network'])} · "
+            f"{TOPUP_STATUS_LABEL.get(t['status'], t['status'])}"
+        )
+    rows = pager("tuh:", page, total, 5)
+    rows.append([btn("💰  Wallet", "wallet"), btn("🏠  Home", "home")])
+    await render(update, "\n".join(lines), kb(rows))
+
+
+# ----------------------------------------------------------------- support (tickets)
+def ticket_thread_text(ticket, messages):
+    lines = [f"🎫 <b>Support ticket #{ticket['id']:05d}</b>", ""]
+    if not messages:
+        lines.append("<i>No messages yet.</i>")
+    for m in messages:
+        who = "You" if m["sender"] == "user" else "Support"
+        lines.append(f"<b>{who}:</b> {esc(m['body'])}")
+    lines.append("")
+    if ticket["status"] == "open":
+        lines.append("Send a message below to continue the conversation.")
+    else:
+        lines.append("<i>This ticket is closed.</i>")
+    return "\n".join(lines)
+
+
+async def show_support(update, context):
+    uid = update.effective_user.id
+    ticket = db.get_open_ticket(uid)
+    if not ticket:
+        handle = db.get_setting("support", "")
+        txt = "💬 <b>Support</b>\n\n"
+        if handle:
+            txt += f"Contact: {esc(handle)}\n\n"
+        txt += (
+            "Open a ticket and an admin will reply to you right here in the "
+            "chat — no need to leave Telegram."
+        )
+        await render(update, txt, kb([[btn("🎫  Open a ticket", "tkn")],
+                                       [btn("🏠  Home", "home")]]))
+        return
+
+    messages = db.list_ticket_messages(ticket["id"])
+    context.user_data["fsm"] = {"step": "ticket_msg", "tid": ticket["id"]}
+    rows = [
+        [btn("🔒  Close ticket", f"tkc:{ticket['id']}")],
+        [btn("🏠  Home", "home")],
+    ]
+    await render(update, ticket_thread_text(ticket, messages), kb(rows))
 
 
 # ----------------------------------------------------------------- admin UI
 async def show_admin(update, context):
     pend = db.count_orders(status="pending")
+    tpend = db.count_topups(status="pending")
+    topen = db.count_tickets(status="open")
     txt = (
         "⚙️ <b>Admin panel</b>\n\n"
-        f"Pending payments to review: <b>{pend}</b>"
+        f"Pending payments to review: <b>{pend}</b>\n"
+        f"Pending top-ups: <b>{tpend}</b>\n"
+        f"Open tickets: <b>{topen}</b>"
     )
     rows = [
         [btn(f"🔎  Review payments ({pend})", "ao:pending:0")],
+        [btn(f"💰  Topups ({tpend})", "at:pending:0"),
+         btn(f"🎫  Tickets ({topen})", "tk:open:0")],
         [btn("📦  Products", "ap:0"), btn("📂  Categories", "ac")],
         [btn("💠  Wallets", "aw"), btn("📊  Stats", "astat")],
         [btn("📣  Broadcast", "abc"), btn("📝  Texts", "ast")],
@@ -564,6 +778,109 @@ async def show_admin_order(update, context, oid: int):
     await render(update, order_detail_text(o), kb(rows))
 
 
+# ------------------------------------------------------------ admin topups
+async def show_admin_topups(update, context, status: str, page: int):
+    st = None if status == "all" else status
+    total = db.count_topups(status=st)
+    items = db.list_topups(status=st, limit=ADMIN_PAGE_SIZE,
+                           offset=page * ADMIN_PAGE_SIZE)
+    rows = []
+    for t in items:
+        rows.append([btn(
+            f"{topup_code(t['id'])} · {money(t['amount'])} {CURRENCY} · "
+            f"{esc(t['network'])}",
+            f"atv:{t['id']}",
+        )])
+    rows += pager(f"at:{status}:", page, total, ADMIN_PAGE_SIZE)
+    rows.append([
+        btn("🔎 Pending", "at:pending:0"), btn("✅ Approved", "at:approved:0"),
+    ])
+    rows.append([btn("🗂 All", "at:all:0"), btn("⬅️  Back", "am")])
+    label = {"pending": "under review", "approved": "credited",
+             "rejected": "rejected", "all": "all"}.get(status, status)
+    body = f"💰 <b>Top-ups — {label}</b>\n\n{total} top-up(s)."
+    if not total:
+        body += "\n\nNothing here."
+    await render(update, body, kb(rows))
+
+
+def topup_detail_text(t):
+    uname = f"@{t['username']}" if t["username"] else "—"
+    return (
+        f"💰 <b>Top-up {topup_code(t['id'])}</b>\n\n"
+        f"Amount: <b>{money(t['amount'])} {CURRENCY}</b>\n"
+        f"Network: <b>{esc(t['network'])}</b>\n"
+        f"Status: {TOPUP_STATUS_LABEL.get(t['status'], t['status'])}\n\n"
+        f"User: {esc(uname)}\n"
+        f"User ID: <code>{t['user_id']}</code>\n"
+        f"TXID: <code>{esc(t['txid'] or '—')}</code>\n"
+        f"Created: {esc(t['created_at'])}"
+        + (f"\nNote: {esc(t['note'])}" if t["note"] else "")
+    )
+
+
+async def show_admin_topup(update, context, tid: int):
+    t = db.get_topup(tid)
+    if not t:
+        await show_admin_topups(update, context, "pending", 0)
+        return
+    rows = []
+    if t["status"] in ("pending", "awaiting_payment"):
+        rows.append([btn("✅ Approve", f"atk:{tid}"),
+                     btn("❌ Reject", f"atn:{tid}")])
+    rows.append([btn("⬅️  Back", "at:pending:0"), btn("🏠  Admin", "am")])
+    await render(update, topup_detail_text(t), kb(rows))
+
+
+# ----------------------------------------------------------- admin tickets
+def admin_ticket_text(ticket, messages):
+    uname = f"@{ticket['username']}" if ticket["username"] else "—"
+    lines = [
+        f"🎫 <b>Ticket #{ticket['id']:05d}</b>  "
+        f"({'open' if ticket['status'] == 'open' else 'closed'})",
+        f"User: {esc(uname)}  ·  ID: <code>{ticket['user_id']}</code>",
+        "",
+    ]
+    if not messages:
+        lines.append("<i>No messages yet.</i>")
+    for m in messages:
+        who = "User" if m["sender"] == "user" else "You"
+        lines.append(f"<b>{who}:</b> {esc(m['body'])}")
+    return "\n".join(lines)
+
+
+async def show_admin_tickets(update, context, status: str, page: int):
+    st = None if status == "all" else status
+    total = db.count_tickets(status=st)
+    items = db.list_tickets(status=st, limit=ADMIN_PAGE_SIZE,
+                            offset=page * ADMIN_PAGE_SIZE)
+    rows = []
+    for t in items:
+        preview = (t["last_msg_preview"] or "")[:24]
+        rows.append([btn(f"#{t['id']:05d} · {preview}", f"tkv:{t['id']}")])
+    rows += pager(f"tk:{status}:", page, total, ADMIN_PAGE_SIZE)
+    rows.append([btn("🟢 Open", "tk:open:0"), btn("🔒 Closed", "tk:closed:0")])
+    rows.append([btn("🗂 All", "tk:all:0"), btn("⬅️  Back", "am")])
+    body = f"🎫 <b>Tickets — {status}</b>\n\n{total} ticket(s)."
+    if not total:
+        body += "\n\nNothing here."
+    await render(update, body, kb(rows))
+
+
+async def show_admin_ticket(update, context, tid: int):
+    t = db.get_ticket(tid)
+    if not t:
+        await show_admin_tickets(update, context, "open", 0)
+        return
+    messages = db.list_ticket_messages(t["id"])
+    rows = []
+    if t["status"] == "open":
+        rows.append([btn("💬 Reply", f"treply:{tid}"),
+                     btn("🔒 Close", f"tkclose:{tid}")])
+    rows.append([btn("⬅️  Back", "tk:open:0"), btn("🏠  Admin", "am")])
+    await render(update, admin_ticket_text(t, messages), kb(rows))
+
+
 # ----------------------------------------------------------------- commands
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
@@ -608,7 +925,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     head = parts[0]
 
     # navigating away from a prompt cancels that prompt
-    if head in ("shop", "cat", "prod", "buy", "net", "myorders", "support"):
+    if head in ("shop", "cat", "prod", "buy", "net", "myorders", "support",
+                "profile", "wallet", "topup"):
         context.user_data.pop("fsm", None)
 
     # ---- public
@@ -633,6 +951,85 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_my_orders(update, context, int(parts[1]))
     if head == "support":
         return await show_support(update, context)
+    if head == "profile":
+        return await show_profile(update, context)
+
+    if head == "balpay":
+        pid = int(parts[1])
+        p = db.get_product(pid)
+        if not p or not p["is_active"] or p["stock"] == 0:
+            return await render(update, "This product is no longer available.",
+                                kb([[btn("⬅️  Back to shop", "shop")]]))
+        bal = db.get_balance(uid)
+        if bal < p["price"]:
+            return await render(update, "Insufficient balance.",
+                                kb([[btn("💰 Wallet", "wallet")]]))
+        db.adjust_balance(uid, -p["price"])
+        user = update.effective_user
+        oid = db.create_order(user.id, user.username, p, "BALANCE", None)
+        db.set_order_status(oid, "paid")
+        if p["stock"] > 0:
+            db.update_product(p["id"], stock=p["stock"] - 1)
+        o = db.get_order(oid)
+        await deliver_order(context, o, p)
+        return await render(
+            update, f"✅ Paid from balance — order {order_code(oid)}.",
+            kb([[btn("🧾 My orders", "myorders:0")], [btn("🏠 Home", "home")]]))
+
+    if head == "wallet":
+        return await show_wallet(update, context)
+    if head == "topup":
+        return await start_topup(update, context)
+    if head == "topnet":
+        fsm = context.user_data.get("fsm") or {}
+        if fsm.get("step") != "topup_amount_set":
+            return await show_wallet(update, context)
+        return await show_topup_payment(update, context, parts[1])
+    if head == "tuh":
+        return await show_topup_history(update, context, int(parts[1]))
+    if head == "tpaid":
+        tid = int(parts[1])
+        t = db.get_topup(tid)
+        if not t or t["user_id"] != uid:
+            return
+        if t["status"] not in ("awaiting_payment",):
+            return await render(
+                update, f"Top-up {topup_code(tid)} is already submitted.",
+                kb([[btn("💰 Wallet", "wallet")]]))
+        context.user_data["fsm"] = {"step": "topup_txid", "tid": tid}
+        return await render(
+            update,
+            f"Top-up {topup_code(tid)} — please send your <b>transaction "
+            "hash (TXID)</b> as a message.\n\nSend /cancel to abort.",
+            kb([[btn("🚫  Cancel", f"tcxl:{tid}")]]),
+        )
+    if head == "tcxl":
+        tid = int(parts[1])
+        t = db.get_topup(tid)
+        if t and t["user_id"] == uid and t["status"] == "awaiting_payment":
+            db.set_topup_status(tid, "cancelled")
+        context.user_data.pop("fsm", None)
+        return await render(update, f"Top-up {topup_code(tid)} cancelled.",
+                            main_menu_markup(uid))
+
+    if head == "tkn":
+        tid = db.create_ticket(uid, update.effective_user.username)
+        context.user_data["fsm"] = {"step": "ticket_msg", "tid": tid}
+        return await render(
+            update,
+            f"🎫 <b>Ticket #{tid:05d} opened.</b>\n\n"
+            "Send your message and an admin will reply here.",
+            kb([[btn("🔒  Close ticket", f"tkc:{tid}")],
+                [btn("🏠  Home", "home")]]),
+        )
+    if head == "tkc":
+        tid = int(parts[1])
+        t = db.get_ticket(tid)
+        if t and t["user_id"] == uid:
+            db.close_ticket(tid)
+        context.user_data.pop("fsm", None)
+        return await render(update, f"Ticket #{tid:05d} closed.",
+                            main_menu_markup(uid))
 
     if head == "paid":
         oid = int(parts[1])
@@ -794,21 +1191,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p = db.get_product(o["product_id"])
         if p and p["stock"] > 0:
             db.update_product(p["id"], stock=p["stock"] - 1)
-        msg = (
-            f"✅ <b>Payment confirmed</b> — order {order_code(oid)}\n\n"
-            f"Product: <b>{esc(o['product_title'])}</b>\n"
-            f"Amount: {money(o['price'])} {CURRENCY} ({esc(o['network'])})\n\n"
-        )
-        if p and p["delivery_content"]:
-            msg += "Here is your product:\n\n" + esc(p["delivery_content"])
-        else:
-            msg += "An admin will deliver your product shortly."
-        try:
-            await context.bot.send_message(o["user_id"], msg,
-                                           parse_mode=ParseMode.HTML,
-                                           disable_web_page_preview=True)
-        except Exception as e:  # noqa: BLE001
-            log.warning("could not notify buyer %s: %s", o["user_id"], e)
+        o = db.get_order(oid)
+        await deliver_order(context, o, p)
         return await show_admin_order(update, context, oid)
 
     if head == "ano":
@@ -860,6 +1244,62 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["fsm"] = {"step": "support"}
         return await render(update, "Send the support contact (e.g. @yourname).",
                             kb([[btn("🚫 Cancel", "ast")]]))
+
+    # ---- admin: topups
+    if head == "at":
+        return await show_admin_topups(update, context, parts[1], int(parts[2]))
+    if head == "atv":
+        return await show_admin_topup(update, context, int(parts[1]))
+    if head == "atk":
+        tid = int(parts[1])
+        t = db.get_topup(tid)
+        if not t:
+            return
+        db.set_topup_status(tid, "approved")
+        db.adjust_balance(t["user_id"], t["amount"])
+        try:
+            await context.bot.send_message(
+                t["user_id"],
+                f"✅ <b>Top-up confirmed</b> — {topup_code(tid)}\n\n"
+                f"{money(t['amount'])} {CURRENCY} has been credited to your "
+                f"wallet balance. New balance: "
+                f"{money(db.get_balance(t['user_id']))} {CURRENCY}.",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not notify buyer %s: %s", t["user_id"], e)
+        return await show_admin_topup(update, context, tid)
+    if head == "atn":
+        tid = int(parts[1])
+        context.user_data["fsm"] = {"step": "topup_reject", "tid": tid}
+        return await render(
+            update,
+            f"Send a short reason for rejecting top-up {topup_code(tid)}.\n"
+            "It will be forwarded to the user. Send /skip for no reason.",
+            kb([[btn("🚫 Cancel", f"atv:{tid}")]]))
+
+    # ---- admin: tickets
+    if head == "tk":
+        return await show_admin_tickets(update, context, parts[1], int(parts[2]))
+    if head == "tkv":
+        return await show_admin_ticket(update, context, int(parts[1]))
+    if head == "treply":
+        tid = int(parts[1])
+        context.user_data["fsm"] = {"step": "ticket_reply", "tid": tid}
+        return await render(
+            update, f"Send your reply to ticket #{tid:05d}.",
+            kb([[btn("🚫 Cancel", f"tkv:{tid}")]]))
+    if head == "tkclose":
+        tid = int(parts[1])
+        db.close_ticket(tid)
+        try:
+            await context.bot.send_message(
+                db.get_ticket(tid)["user_id"],
+                f"🔒 Support ticket #{tid:05d} has been closed by an admin.",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return await show_admin_ticket(update, context, tid)
 
 
 # ----------------------------------------------------------------- messages
@@ -926,11 +1366,136 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ---------- buyer: wallet top-up amount
+    if step == "topup_amount":
+        try:
+            amount = float(text.replace(",", "."))
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await msg.reply_text("Send a positive number, e.g. 20 or 50.5")
+            return
+        fsm["amount"] = amount
+        fsm["step"] = "topup_amount_set"
+        wallets = configured_wallets()
+        if not wallets:
+            context.user_data.pop("fsm", None)
+            await msg.reply_text(
+                "⚠️ No payment wallets are configured yet. Please contact "
+                "support.", reply_markup=main_menu_markup(u.id))
+            return
+        rows = [[btn(f"💠 {label}", f"topnet:{code}")]
+                for code, label, _ in wallets]
+        rows.append([btn("⬅️  Back", "wallet")])
+        await msg.reply_text(
+            f"➕ <b>Top up</b>\nAmount: <b>{money(amount)} {CURRENCY}</b>\n\n"
+            "Choose the network you want to pay on:",
+            reply_markup=kb(rows), parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # ---------- buyer: submitting a top-up TXID
+    if step == "topup_txid":
+        tid = fsm["tid"]
+        t = db.get_topup(tid)
+        if not t or t["user_id"] != u.id:
+            context.user_data.pop("fsm", None)
+            return
+        txid = text.split()[0] if text else ""
+        if len(txid) < 10:
+            await msg.reply_text(
+                "That does not look like a transaction hash. "
+                "Please paste the full TXID, or send /cancel."
+            )
+            return
+        if db.topup_txid_exists(txid):
+            await msg.reply_text(
+                "This transaction hash has already been submitted. "
+                "If you think this is a mistake, contact support."
+            )
+            return
+        db.set_topup_txid(tid, txid)
+        context.user_data.pop("fsm", None)
+        await msg.reply_text(
+            f"✅ Thanks! Top-up {topup_code(tid)} is now under review.\n"
+            "Your balance will update as soon as it's confirmed.",
+            reply_markup=main_menu_markup(u.id), parse_mode=ParseMode.HTML,
+        )
+        t = db.get_topup(tid)
+        await notify_admins(
+            context,
+            "🔔 <b>New top-up to review</b>\n\n" + topup_detail_text(t),
+            kb([[btn("✅ Approve", f"atk:{tid}"),
+                 btn("❌ Reject", f"atn:{tid}")]]),
+        )
+        return
+
+    # ---------- buyer: ticket message
+    if step == "ticket_msg":
+        tid = fsm["tid"]
+        t = db.get_ticket(tid)
+        if not t or t["user_id"] != u.id or t["status"] != "open":
+            context.user_data.pop("fsm", None)
+            return
+        db.add_ticket_message(tid, "user", text or "(no text)")
+        await msg.reply_text(
+            "✅ Sent to support. You'll be notified here when they reply.",
+            reply_markup=kb([[btn("🔒 Close ticket", f"tkc:{tid}")],
+                             [btn("🏠 Home", "home")]]),
+        )
+        uname = f"@{u.username}" if u.username else u.first_name or "—"
+        await notify_admins(
+            context,
+            f"🔔 <b>New support message</b> — ticket #{tid:05d}\n"
+            f"From: {esc(uname)} (<code>{u.id}</code>)\n\n{esc(text)}",
+            kb([[btn("💬 Reply", f"treply:{tid}"),
+                 btn("🔒 Close", f"tkclose:{tid}")]]),
+        )
+        return
+
     if not is_admin(u.id):
         context.user_data.pop("fsm", None)
         return
 
     # ---------- admin flows
+    if step == "topup_reject":
+        tid = fsm["tid"]
+        reason = "" if text == "/skip" else text
+        db.set_topup_status(tid, "rejected", reason or None)
+        context.user_data.pop("fsm", None)
+        t = db.get_topup(tid)
+        try:
+            await context.bot.send_message(
+                t["user_id"],
+                f"❌ Top-up {topup_code(tid)} was rejected."
+                + (f"\n\nReason: {esc(reason)}" if reason else "")
+                + "\n\nIf you believe this is an error, contact support.",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        await msg.reply_text(f"Top-up {topup_code(tid)} rejected.")
+        return
+
+    if step == "ticket_reply":
+        tid = fsm["tid"]
+        t = db.get_ticket(tid)
+        if not t:
+            context.user_data.pop("fsm", None)
+            return
+        db.add_ticket_message(tid, "admin", text or "(no text)")
+        context.user_data.pop("fsm", None)
+        try:
+            await context.bot.send_message(
+                t["user_id"],
+                f"💬 <b>Support reply</b> — ticket #{tid:05d}\n\n{esc(text)}",
+                parse_mode=ParseMode.HTML,
+            )
+            await msg.reply_text("✅ Reply sent.")
+        except Exception as e:  # noqa: BLE001
+            await msg.reply_text(f"⚠️ Could not deliver reply: {e}")
+        return
+
     if step == "reject":
         oid = fsm["oid"]
         reason = "" if text == "/skip" else text
@@ -1155,6 +1720,12 @@ def main():
         log.warning("ADMIN_IDS is empty — nobody can access the admin panel!")
 
     db.init()
+    if SEED_ON_BOOT:
+        try:
+            import seed
+            seed.run()
+        except Exception as e:  # noqa: BLE001
+            log.warning("catalogue seed skipped: %s", e)
     threading.Thread(target=start_health_server, daemon=True).start()
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()

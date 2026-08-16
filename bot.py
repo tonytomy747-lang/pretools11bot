@@ -318,6 +318,8 @@ async def deliver_order(context, o, p):
     except Exception as e:  # noqa: BLE001
         log.warning("could not notify buyer %s: %s", o["user_id"], e)
 
+    await pay_referral_bonus_if_first_purchase(context, o)
+
 
 def welcome_text():
     tpl = db.get_setting("welcome", DEFAULT_WELCOME)
@@ -629,7 +631,8 @@ async def show_referral_info(update, context):
     if REFERRAL_BONUS > 0:
         txt += (
             f"\n💰 You earn <b>{money(REFERRAL_BONUS)} {CURRENCY}</b> for every "
-            "new user who joins with your link."
+            "person you invite who makes their <b>first purchase</b> "
+            "(added to your balance automatically)."
         )
     await render(update, txt, kb([[btn("👤  Profile", "profile")],
                                    [btn("🏠  Home", "home")]]))
@@ -1172,7 +1175,32 @@ async def show_admin_search_result(update, context, term: str, page: int):
 
 
 # ----------------------------------------------------------------- commands
-REFERRAL_BONUS = float(os.getenv("REFERRAL_BONUS", "0") or 0)
+# Paid out once per referred user, the moment THEIR first order is confirmed
+# paid (crypto admin-approve or instant balance checkout) — not at signup.
+REFERRAL_BONUS = float(os.getenv("REFERRAL_BONUS", "0.5") or 0)
+
+
+async def pay_referral_bonus_if_first_purchase(context, order):
+    """Credit the referrer 0.5 USDT the first time their invitee's order is
+    confirmed paid. `mark_ref_bonus_paid` is an atomic once-only flag, so this
+    is safe to call from every "order just became paid" code path."""
+    if REFERRAL_BONUS <= 0:
+        return
+    ref_id = db.get_referrer(order["user_id"])
+    if not ref_id:
+        return
+    if not db.mark_ref_bonus_paid(order["user_id"]):
+        return  # already paid for this referred user
+    db.adjust_balance(ref_id, REFERRAL_BONUS)
+    try:
+        await context.bot.send_message(
+            ref_id,
+            "🎉 <b>Your referral just made their first purchase!</b>\n"
+            f"💰 {money(REFERRAL_BONUS)} {CURRENCY} has been added to your balance.",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1191,19 +1219,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ref_id = int(arg[4:])
             except ValueError:
                 ref_id = None
-            if ref_id and db.set_referrer_if_unset(u.id, ref_id):
-                if REFERRAL_BONUS > 0 and db.mark_ref_bonus_paid(u.id):
-                    db.adjust_balance(ref_id, REFERRAL_BONUS)
-                    try:
-                        await context.bot.send_message(
-                            ref_id,
-                            f"🎉 <b>Someone joined using your referral link!</b>\n"
-                            f"💰 {money(REFERRAL_BONUS)} {CURRENCY} has been added "
-                            "to your balance.",
-                            parse_mode=ParseMode.HTML,
-                        )
-                    except Exception:  # noqa: BLE001
-                        pass
+            if ref_id:
+                db.set_referrer_if_unset(u.id, ref_id)
+                # bonus itself is paid later, on this user's first confirmed
+                # purchase — see pay_referral_bonus_if_first_purchase()
 
     context.user_data.pop("fsm", None)
     await update.message.reply_text(

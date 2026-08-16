@@ -1351,12 +1351,15 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # doc.file_id is a *document* file_id — send_photo/InputMediaPhoto can
-    # never accept it ("Can't use file of type document as photo"), even
-    # though the bytes are a real image. Re-send it as a photo once so
-    # Telegram issues a proper photo file_id, then store that instead.
+    # never accept it, not even as the `photo` argument to reply_photo/
+    # send_photo ("Can't use file of type document as photo"). Must
+    # download the actual bytes and upload those fresh as a photo to get
+    # a real photo file_id back.
     try:
+        tg_file = await doc.get_file()
+        file_bytes = bytes(await tg_file.download_as_bytearray())
         sent = await update.message.reply_photo(
-            doc.file_id,
+            file_bytes,
             caption=f"✅ <b>{esc(fname)}</b> → #{p['id']} {esc(title)} ({score:.2f})",
             parse_mode=ParseMode.HTML,
         )

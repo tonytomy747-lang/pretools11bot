@@ -96,7 +96,7 @@ TOPUP_STATUS_LABEL = {
 }
 
 DEFAULT_WELCOME = (
-    "Welcome to <b>{shop}</b>.\n\n"
+    "🎉 <b>Welcome to {shop}!</b>\n\n"
     "Browse the catalogue, pick a product and pay with USDT on the network "
     "you prefer, or top up your wallet balance and check out instantly. "
     "After you send a payment, submit your transaction hash and an admin "
@@ -299,18 +299,18 @@ async def deliver_order(context, o, p):
     Shared by admin-approve (crypto orders) and instant balance checkout.
     """
     msg = (
-        f"✅ <b>Payment confirmed</b> — order {order_code(o['id'])}\n\n"
-        f"Product: <b>{esc(o['product_title'])}</b>\n"
-        f"Amount: {money(o['price'])} {CURRENCY} ({esc(o['network'])})\n\n"
+        f"🎉 <b>Payment confirmed!</b> — order {order_code(o['id'])}\n\n"
+        f"📦 Product: <b>{esc(o['product_title'])}</b>\n"
+        f"💵 Amount: {money(o['price'])} {CURRENCY} ({esc(o['network'])})\n\n"
     )
     if p and p["delivery_content"]:
         msg += (
             "📩 Please contact support with your order ID "
             f"<b>{order_code(o['id'])}</b> to receive your account logins.\n"
-            "⏱ Support usually replies within a few hours."
+            "⏱ <i>Support usually replies within a few hours.</i>"
         )
     else:
-        msg += "An admin will deliver your product shortly."
+        msg += "🚚 An admin will deliver your product shortly."
     try:
         await context.bot.send_message(o["user_id"], msg,
                                        parse_mode=ParseMode.HTML,
@@ -347,9 +347,9 @@ async def show_shop(update, context):
         rows.append([btn(f"🗂  All products  ({total})", "cat:0:0")])
     rows.append([btn("⬅️  Back", "home")])
 
-    txt = f"🛍 <b>{esc(SHOP_NAME)}</b>\n\nPick a category:"
+    txt = f"🛍 <b>{esc(SHOP_NAME)}</b>\n\n📂 Pick a category to browse:"
     if not total:
-        txt = f"🛍 <b>{esc(SHOP_NAME)}</b>\n\nThe shop is empty right now."
+        txt = f"🛍 <b>{esc(SHOP_NAME)}</b>\n\n<i>The shop is empty right now — check back soon.</i>"
     await render(update, txt, kb(rows))
 
 
@@ -379,7 +379,7 @@ async def show_category(update, context, cid: int, page: int):
                 [btn("🔎  Search", "csearch"), btn("🚫  Clear search", "csclr")]
                 if search else [btn("🔎  Search", "csearch")],
                 [btn("⬅️  Back", back)]]
-        await render(update, f"📂 <b>{title}</b>\n\nNothing here yet.", kb(rows))
+        await render(update, f"📂 <b>{title}</b>\n\n<i>Nothing here yet.</i>", kb(rows))
         return
 
     lines = [f"📂 <b>{title}</b>  ·  {total} item(s)", ""]
@@ -411,7 +411,7 @@ async def show_category(update, context, cid: int, page: int):
 async def show_product(update, context, pid: int, cid: int, page: int):
     p = db.get_product(pid)
     if not p or not p["is_active"]:
-        await render(update, "This product is no longer available.",
+        await render(update, "❌ This product is no longer available.",
                      kb([[btn("⬅️  Back to shop", "shop")]]))
         return
 
@@ -461,7 +461,7 @@ def _checkout_price(context, pid, base_price):
 async def show_networks(update, context, pid: int):
     p = db.get_product(pid)
     if not p or not p["is_active"] or p["stock"] == 0:
-        await render(update, "This product is no longer available.",
+        await render(update, "❌ This product is no longer available.",
                      kb([[btn("⬅️  Back to shop", "shop")]]))
         return
 
@@ -472,7 +472,7 @@ async def show_networks(update, context, pid: int):
     if not wallets and bal < price:
         await render(
             update,
-            "⚠️ No payment wallets are configured yet.\n"
+            "⚠️ <b>No payment wallets are configured yet.</b>\n"
             "Please contact support.",
             kb([[btn("⬅️  Back", f"prod:{pid}:0:0")]]),
         )
@@ -490,17 +490,17 @@ async def show_networks(update, context, pid: int):
         rows.append([btn("🎟  Have a coupon?", f"cpna:{pid}")])
     rows.append([btn("⬅️  Back", f"prod:{pid}:0:0")])
 
-    txt = f"<b>{esc(p['title'])}</b>\n"
+    txt = f"💳 <b>{esc(p['title'])}</b>\n"
     if discount:
         txt += (
             f"Price: <s>{money(p['price'])}</s> "
             f"<b>{money(price)} {CURRENCY}</b> "
-            f"(coupon {esc(coupon_code)}, -{money(discount)})\n"
+            f"(🎟 coupon {esc(coupon_code)}, -{money(discount)})\n"
         )
     else:
         txt += f"Amount: <b>{money(price)} {CURRENCY}</b>\n"
     txt += (
-        f"Your balance: {money(bal)} {CURRENCY}\n\n"
+        f"💰 Your balance: {money(bal)} {CURRENCY}\n\n"
         "Choose how you want to pay:"
     )
     await render(update, txt, kb(rows))
@@ -511,7 +511,7 @@ async def show_payment(update, context, pid: int, net: str):
     p = db.get_product(pid)
     address = db.get_setting(f"wallet_{net}")
     if not p or not address:
-        await render(update, "Something went wrong. Please start again.",
+        await render(update, "⚠️ Something went wrong. Please start again.",
                      kb([[btn("🏠  Home", "home")]]))
         return
 
@@ -530,10 +530,10 @@ async def show_payment(update, context, pid: int, net: str):
     )
     txt = (
         f"🧾 <b>Order {order_code(oid)}</b>\n\n"
-        f"Product: <b>{esc(p['title'])}</b>\n"
+        f"📦 Product: <b>{esc(p['title'])}</b>\n"
         f"{discount_line}"
-        f"Amount: <b>{money(price)} {CURRENCY}</b>\n"
-        f"Network: <b>{esc(NET_LABEL.get(net, net))}</b>\n\n"
+        f"💵 Amount: <b>{money(price)} {CURRENCY}</b>\n"
+        f"💠 Network: <b>{esc(NET_LABEL.get(net, net))}</b>\n\n"
         f"Send exactly <b>{money(price)} {CURRENCY}</b> to this address:\n"
         f"<code>{esc(address)}</code>\n"
         "<i>(tap the address to copy, or scan the QR code above)</i>\n\n"
@@ -564,7 +564,7 @@ async def show_my_orders(update, context, page: int):
     items = db.list_orders(user_id=uid, limit=5, offset=page * 5)
 
     if not total:
-        await render(update, "You have no orders yet.",
+        await render(update, "🧾 <i>You have no orders yet.</i>",
                      kb([[btn("🛍  Browse shop", "shop")],
                          [btn("🏠  Home", "home")]]))
         return
@@ -605,7 +605,7 @@ async def show_profile(update, context):
         f"🤝 Referrals: <b>{refs}</b>\n"
     )
     if ticket:
-        txt += "\n🎫 You have an open support ticket."
+        txt += "\n🎫 <i>You have an open support ticket.</i>"
 
     rows = [
         [btn("💰  Wallet", "wallet"), btn("🧾  My orders", "myorders:0")],
@@ -628,7 +628,7 @@ async def show_referral_info(update, context):
     )
     if REFERRAL_BONUS > 0:
         txt += (
-            f"\nYou earn <b>{money(REFERRAL_BONUS)} {CURRENCY}</b> for every "
+            f"\n💰 You earn <b>{money(REFERRAL_BONUS)} {CURRENCY}</b> for every "
             "new user who joins with your link."
         )
     await render(update, txt, kb([[btn("👤  Profile", "profile")],
@@ -640,7 +640,7 @@ async def show_favorites(update, context, page: int):
     total = db.count_favorites(uid)
     items = db.list_favorites(uid, limit=PAGE_SIZE, offset=page * PAGE_SIZE)
     if not total:
-        await render(update, "❤️ You have no favorites yet.",
+        await render(update, "❤️ <i>You have no favorites yet.</i>",
                      kb([[btn("🛍  Browse shop", "shop")],
                          [btn("🏠  Home", "home")]]))
         return
@@ -667,7 +667,7 @@ async def show_wallet(update, context):
     )
     if pending:
         txt += f"🔎 {pending} top-up(s) under review.\n"
-    txt += "\nTop up your balance to check out instantly, no waiting."
+    txt += "\n<i>Top up your balance to check out instantly, no waiting.</i>"
     rows = [
         [btn("➕  Top up", "topup")],
         [btn("🧾  Top-up history", "tuh:0")],
@@ -695,7 +695,7 @@ async def show_topup_networks(update, context):
     if not wallets:
         await render(
             update,
-            "⚠️ No payment wallets are configured yet.\nPlease contact support.",
+            "⚠️ <b>No payment wallets are configured yet.</b>\nPlease contact support.",
             kb([[btn("⬅️  Back", "wallet")]]),
         )
         return
@@ -714,7 +714,7 @@ async def show_topup_payment(update, context, net: str):
     user = update.effective_user
     address = db.get_setting(f"wallet_{net}")
     if not amount or not address:
-        await render(update, "Something went wrong. Please start again.",
+        await render(update, "⚠️ Something went wrong. Please start again.",
                      kb([[btn("💰  Wallet", "wallet")]]))
         return
 
@@ -723,8 +723,8 @@ async def show_topup_payment(update, context, net: str):
 
     txt = (
         f"🧾 <b>Top-up {topup_code(tid)}</b>\n\n"
-        f"Amount: <b>{money(amount)} {CURRENCY}</b>\n"
-        f"Network: <b>{esc(NET_LABEL.get(net, net))}</b>\n\n"
+        f"💵 Amount: <b>{money(amount)} {CURRENCY}</b>\n"
+        f"💠 Network: <b>{esc(NET_LABEL.get(net, net))}</b>\n\n"
         f"Send exactly <b>{money(amount)} {CURRENCY}</b> to this address:\n"
         f"<code>{esc(address)}</code>\n"
         "<i>(tap the address to copy, or scan the QR code above)</i>\n\n"
@@ -754,7 +754,7 @@ async def show_topup_history(update, context, page: int):
     total = db.count_topups(user_id=uid)
     items = db.list_topups(user_id=uid, limit=5, offset=page * 5)
     if not total:
-        await render(update, "You have no top-ups yet.",
+        await render(update, "🧾 <i>You have no top-ups yet.</i>",
                      kb([[btn("➕  Top up", "topup")],
                          [btn("💰  Wallet", "wallet")]]))
         return
@@ -780,7 +780,7 @@ def ticket_thread_text(ticket, messages):
         lines.append(f"<b>{who}:</b> {esc(m['body'])}")
     lines.append("")
     if ticket["status"] == "open":
-        lines.append("Send a message below to continue the conversation.")
+        lines.append("<i>Send a message below to continue the conversation.</i>")
     else:
         lines.append("<i>This ticket is closed.</i>")
     return "\n".join(lines)
@@ -793,10 +793,10 @@ async def show_support(update, context):
         handle = db.get_setting("support", "")
         txt = "💬 <b>Support</b>\n\n"
         if handle:
-            txt += f"Contact: {esc(handle)}\n\n"
+            txt += f"📞 Contact: {esc(handle)}\n\n"
         txt += (
-            "Open a ticket and an admin will reply to you right here in the "
-            "chat — no need to leave Telegram."
+            "<i>Open a ticket and an admin will reply to you right here in the "
+            "chat — no need to leave Telegram.</i>"
         )
         await render(update, txt, kb([[btn("🎫  Open a ticket", "tkn")],
                                        [btn("🏠  Home", "home")]]))
@@ -818,9 +818,9 @@ async def show_admin(update, context):
     topen = db.count_tickets(status="open")
     txt = (
         "⚙️ <b>Admin panel</b>\n\n"
-        f"Pending payments to review: <b>{pend}</b>\n"
-        f"Pending top-ups: <b>{tpend}</b>\n"
-        f"Open tickets: <b>{topen}</b>"
+        f"🔎 Pending payments to review: <b>{pend}</b>\n"
+        f"💰 Pending top-ups: <b>{tpend}</b>\n"
+        f"🎫 Open tickets: <b>{topen}</b>"
     )
     rows = [
         [btn(f"🔎  Review payments ({pend})", "ao:pending:0")],
@@ -860,7 +860,7 @@ async def show_admin_product(update, context, pid: int):
     cat = db.get_category(p["category_id"]) if p["category_id"] else None
     stock = "unlimited" if p["stock"] < 0 else str(p["stock"])
     txt = (
-        f"<b>{esc(p['title'])}</b>  (id {p['id']})\n\n"
+        f"<b>{esc(p['title'])}</b>  (id <code>{p['id']}</code>)\n\n"
         f"{esc((p['description'] or '')[:500])}\n\n"
         f"💵 {money(p['price'])} {CURRENCY}\n"
         f"📂 {esc(cat['name']) if cat else '—'}\n"
@@ -893,7 +893,7 @@ async def show_admin_categories(update, context):
             btn("🗑", f"acd:{c['id']}"),
         ])
     rows.append([btn("⬅️  Back", "am")])
-    await render(update, "📂 <b>Categories</b>\n\nTap a name to rename it.",
+    await render(update, "📂 <b>Categories</b>\n\n<i>Tap a name to rename it.</i>",
                  kb(rows))
 
 
@@ -912,7 +912,7 @@ async def show_wallets(update, context):
         rows.append(row)
     rows.append([btn("⬅️  Back", "am")])
     lines.append("")
-    lines.append("Only networks with an address show up at checkout.")
+    lines.append("<i>Only networks with an address show up at checkout.</i>")
     await render(update, "\n".join(lines), kb(rows))
 
 
@@ -934,7 +934,7 @@ async def show_admin_coupons(update, context, page: int):
     rows.append([btn("⬅️  Back", "am")])
     body = f"🎟 <b>Coupons</b>\n\n{total} coupon(s)."
     if not total:
-        body += "\n\nNo coupons yet."
+        body += "\n\n<i>No coupons yet.</i>"
     await render(update, body, kb(rows))
 
 
@@ -981,7 +981,7 @@ async def show_admin_orders(update, context, status: str, page: int):
              "rejected": "rejected", "all": "all"}.get(status, status)
     body = f"🧾 <b>Orders — {label}</b>\n\n{total} order(s)."
     if not total:
-        body += "\n\nNothing here."
+        body += "\n\n<i>Nothing here.</i>"
     await render(update, body, kb(rows))
 
 
@@ -989,15 +989,15 @@ def order_detail_text(o):
     uname = f"@{o['username']}" if o["username"] else "—"
     return (
         f"🧾 <b>Order {order_code(o['id'])}</b>\n\n"
-        f"Product: <b>{esc(o['product_title'])}</b>\n"
-        f"Amount: <b>{money(o['price'])} {CURRENCY}</b>\n"
-        f"Network: <b>{esc(o['network'])}</b>\n"
+        f"📦 Product: <b>{esc(o['product_title'])}</b>\n"
+        f"💵 Amount: <b>{money(o['price'])} {CURRENCY}</b>\n"
+        f"💠 Network: <b>{esc(o['network'])}</b>\n"
         f"Status: {STATUS_LABEL.get(o['status'], o['status'])}\n\n"
-        f"Buyer: {esc(uname)}\n"
+        f"👤 Buyer: {esc(uname)}\n"
         f"Buyer ID: <code>{o['user_id']}</code>\n"
         f"TXID: <code>{esc(o['txid'] or '—')}</code>\n"
         f"Created: {esc(o['created_at'])}"
-        + (f"\nNote: {esc(o['note'])}" if o["note"] else "")
+        + (f"\n📝 Note: {esc(o['note'])}" if o["note"] else "")
     )
 
 
@@ -1039,7 +1039,7 @@ async def show_admin_topups(update, context, status: str, page: int):
              "rejected": "rejected", "all": "all"}.get(status, status)
     body = f"💰 <b>Top-ups — {label}</b>\n\n{total} top-up(s)."
     if not total:
-        body += "\n\nNothing here."
+        body += "\n\n<i>Nothing here.</i>"
     await render(update, body, kb(rows))
 
 
@@ -1047,14 +1047,14 @@ def topup_detail_text(t):
     uname = f"@{t['username']}" if t["username"] else "—"
     return (
         f"💰 <b>Top-up {topup_code(t['id'])}</b>\n\n"
-        f"Amount: <b>{money(t['amount'])} {CURRENCY}</b>\n"
-        f"Network: <b>{esc(t['network'])}</b>\n"
+        f"💵 Amount: <b>{money(t['amount'])} {CURRENCY}</b>\n"
+        f"💠 Network: <b>{esc(t['network'])}</b>\n"
         f"Status: {TOPUP_STATUS_LABEL.get(t['status'], t['status'])}\n\n"
-        f"User: {esc(uname)}\n"
+        f"👤 User: {esc(uname)}\n"
         f"User ID: <code>{t['user_id']}</code>\n"
         f"TXID: <code>{esc(t['txid'] or '—')}</code>\n"
         f"Created: {esc(t['created_at'])}"
-        + (f"\nNote: {esc(t['note'])}" if t["note"] else "")
+        + (f"\n📝 Note: {esc(t['note'])}" if t["note"] else "")
     )
 
 
@@ -1102,7 +1102,7 @@ async def show_admin_tickets(update, context, status: str, page: int):
     rows.append([btn("🗂 All", "tk:all:0"), btn("⬅️  Back", "am")])
     body = f"🎫 <b>Tickets — {status}</b>\n\n{total} ticket(s)."
     if not total:
-        body += "\n\nNothing here."
+        body += "\n\n<i>Nothing here.</i>"
     await render(update, body, kb(rows))
 
 
@@ -1166,7 +1166,7 @@ async def show_admin_search_result(update, context, term: str, page: int):
             lines.append(f"  {topup_code(t['id'])} · {money(t['amount'])} {CURRENCY}")
             rows.append([btn(f"{topup_code(t['id'])}", f"atv:{t['id']}")])
     if not orders and not topups:
-        lines.append("Nothing found.")
+        lines.append("<i>Nothing found.</i>")
     rows.append([btn("🔍  New search", "asrch"), btn("⬅️  Back", "am")])
     await render(update, "\n".join(lines), kb(rows))
 
@@ -1180,7 +1180,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_new = db.execute("SELECT 1 FROM users WHERE user_id = ?", (u.id,), "one") is None
     db.upsert_user(u.id, u.username, u.first_name)
     if db.is_blocked(u.id):
-        await update.message.reply_text("🚫 You are blocked from using this bot.")
+        await update.message.reply_text("🚫 <b>You are blocked from using this bot.</b>",
+                                        parse_mode=ParseMode.HTML)
         return
 
     if is_new and context.args:
@@ -1196,9 +1197,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     try:
                         await context.bot.send_message(
                             ref_id,
-                            f"🎉 Someone joined using your referral link! "
-                            f"{money(REFERRAL_BONUS)} {CURRENCY} has been added "
+                            f"🎉 <b>Someone joined using your referral link!</b>\n"
+                            f"💰 {money(REFERRAL_BONUS)} {CURRENCY} has been added "
                             "to your balance.",
+                            parse_mode=ParseMode.HTML,
                         )
                     except Exception:  # noqa: BLE001
                         pass
@@ -1215,14 +1217,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"Your Telegram ID: <code>{update.effective_user.id}</code>",
+        f"🆔 Your Telegram ID: <code>{update.effective_user.id}</code>",
         parse_mode=ParseMode.HTML,
     )
 
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("You are not an admin.")
+        await update.message.reply_text("❌ You are not an admin.")
         return
     context.user_data.pop("fsm", None)
     await show_admin(update, context)
@@ -1231,7 +1233,7 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("fsm", None)
     await update.message.reply_text(
-        "Cancelled.", reply_markup=main_menu_markup(update.effective_user.id)
+        "🚫 Cancelled.", reply_markup=main_menu_markup(update.effective_user.id)
     )
 
 
@@ -1303,13 +1305,13 @@ def _im_best_match(norm_name: str, titles: list):
 
 async def cmd_matchimages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("You are not an admin.")
+        await update.message.reply_text("❌ You are not an admin.")
         return
 
     arg = (context.args[0].lower() if context.args else "")
     if arg in ("done", "stop", "end"):
         context.user_data.pop("fsm", None)
-        await update.message.reply_text("Image-matching session ended.")
+        await update.message.reply_text("✅ Image-matching session ended.")
         return
 
     overwrite = arg == "overwrite"
@@ -1345,7 +1347,7 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     products = db.list_products(only_active=False, limit=10000)
     if not products:
-        await update.message.reply_text("No products in DB.")
+        await update.message.reply_text("⚠️ No products in DB.")
         return
     titles = [p["title"] for p in products]
     by_title = {p["title"]: p for p in products}
@@ -1494,14 +1496,14 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pid = int(parts[1])
         p = db.get_product(pid)
         if not p or not p["is_active"] or p["stock"] == 0:
-            return await render(update, "This product is no longer available.",
+            return await render(update, "❌ This product is no longer available.",
                                 kb([[btn("⬅️  Back to shop", "shop")]]))
         if not db.decrement_stock_if_available(pid):
-            return await render(update, "Sold out just now — sorry!",
+            return await render(update, "❌ Sold out just now — sorry!",
                                 kb([[btn("⬅️  Back to shop", "shop")]]))
         if not db.deduct_balance_if_enough(uid, p["price"]):
             db.restock_one(pid)  # release the reservation, payment failed
-            return await render(update, "Insufficient balance.",
+            return await render(update, "⚠️ Insufficient balance.",
                                 kb([[btn("💰 Wallet", "wallet")]]))
         user = update.effective_user
         oid = db.create_order(user.id, user.username, p, "BALANCE", None)
@@ -1509,7 +1511,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         o = db.get_order(oid)
         await deliver_order(context, o, p)
         return await render(
-            update, f"✅ Paid from balance — order {order_code(oid)}.",
+            update, f"🎉 <b>Paid from balance</b> — order {order_code(oid)}.",
             kb([[btn("🧾 My orders", "myorders:0")], [btn("🏠 Home", "home")]]))
 
     if head == "wallet":
@@ -1530,12 +1532,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         if t["status"] not in ("awaiting_payment",):
             return await render(
-                update, f"Top-up {topup_code(tid)} is already submitted.",
+                update, f"ℹ️ Top-up {topup_code(tid)} is already submitted.",
                 kb([[btn("💰 Wallet", "wallet")]]))
         context.user_data["fsm"] = {"step": "topup_txid", "tid": tid}
         return await render(
             update,
-            f"Top-up {topup_code(tid)} — please send your <b>transaction "
+            f"🧾 Top-up {topup_code(tid)} — please send your <b>transaction "
             "hash (TXID)</b> as a message.\n\nSend /cancel to abort.",
             kb([[btn("🚫  Cancel", f"tcxl:{tid}")]]),
         )
@@ -1545,7 +1547,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if t and t["user_id"] == uid and t["status"] == "awaiting_payment":
             db.set_topup_status(tid, "cancelled")
         context.user_data.pop("fsm", None)
-        return await render(update, f"Top-up {topup_code(tid)} cancelled.",
+        return await render(update, f"🚫 Top-up {topup_code(tid)} cancelled.",
                             main_menu_markup(uid))
 
     if head == "tkn":
@@ -1564,7 +1566,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if t and t["user_id"] == uid:
             db.close_ticket(tid)
         context.user_data.pop("fsm", None)
-        return await render(update, f"Ticket #{tid:05d} closed.",
+        return await render(update, f"🔒 Ticket #{tid:05d} closed.",
                             main_menu_markup(uid))
 
     if head == "paid":
@@ -1574,12 +1576,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         if o["status"] not in ("awaiting_payment",):
             return await render(
-                update, f"Order {order_code(oid)} is already submitted.",
+                update, f"ℹ️ Order {order_code(oid)} is already submitted.",
                 kb([[btn("🧾 My orders", "myorders:0")]]))
         context.user_data["fsm"] = {"step": "txid", "oid": oid}
         return await render(
             update,
-            f"Order {order_code(oid)} — please send your <b>transaction hash "
+            f"🧾 Order {order_code(oid)} — please send your <b>transaction hash "
             "(TXID)</b> as a message.\n\n"
             "You can find it in your wallet's transaction history. "
             "Send /cancel to abort.",
@@ -1592,7 +1594,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if o and o["user_id"] == uid and o["status"] == "awaiting_payment":
             db.set_order_status(oid, "cancelled")
         context.user_data.pop("fsm", None)
-        return await render(update, f"Order {order_code(oid)} cancelled.",
+        return await render(update, f"🚫 Order {order_code(oid)} cancelled.",
                             main_menu_markup(uid))
 
     # ---- admin only
@@ -1613,7 +1615,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if head == "apd":
         pid = int(parts[1])
         return await render(
-            update, "Delete this product permanently?",
+            update, "⚠️ Delete this product permanently?",
             kb([[btn("🗑 Yes, delete", f"apdy:{pid}"),
                  btn("⬅️ No", f"apv:{pid}")]]),
         )
@@ -1642,7 +1644,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             draft.get("delivery"), cid, draft.get("stock", -1),
         )
         context.user_data.pop("fsm", None)
-        await render(update, f"✅ Product created (id {pid}).",
+        await render(update, f"✅ <b>Product created</b> (id <code>{pid}</code>).",
                      kb([[btn("📦 Open product", f"apv:{pid}")],
                          [btn("➕ Add another", "apn")],
                          [btn("⚙️ Admin", "am")]]))
@@ -1655,7 +1657,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for c in db.list_categories():
                 rows.append([btn(c["name"], f"apsc:{pid}:{c['id']}")])
             rows.append([btn("⬅️ Back", f"apv:{pid}")])
-            return await render(update, "Pick a category:", kb(rows))
+            return await render(update, "📂 Pick a category:", kb(rows))
         cid = int(parts[2]) or None
         db.update_product(pid, category_id=cid)
         return await show_admin_product(update, context, pid)
@@ -1682,16 +1684,16 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_admin_categories(update, context)
     if head == "acn":
         context.user_data["fsm"] = {"step": "cat_new"}
-        return await render(update, "Send the <b>category name</b>.",
+        return await render(update, "➕ Send the <b>category name</b>.",
                             kb([[btn("🚫 Cancel", "ac")]]))
     if head == "acr":
         context.user_data["fsm"] = {"step": "cat_rename", "cid": int(parts[1])}
-        return await render(update, "Send the <b>new name</b>.",
+        return await render(update, "✏️ Send the <b>new name</b>.",
                             kb([[btn("🚫 Cancel", "ac")]]))
     if head == "acd":
         cid = int(parts[1])
         return await render(
-            update, "Delete this category? Its products stay but become "
+            update, "⚠️ Delete this category? Its products stay but become "
                     "uncategorised.",
             kb([[btn("🗑 Yes", f"acdy:{cid}"), btn("⬅️ No", "ac")]]))
     if head == "acdy":
@@ -1705,8 +1707,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["fsm"] = {"step": "wallet", "net": net}
         return await render(
             update,
-            f"Send the USDT <b>{esc(net)}</b> receiving address.\n\n"
-            "Double-check it — this is what buyers will send funds to.",
+            f"💠 Send the USDT <b>{esc(net)}</b> receiving address.\n\n"
+            "<i>Double-check it — this is what buyers will send funds to.</i>",
             kb([[btn("🚫 Cancel", "aw")]]))
     if head == "awd":
         db.del_setting(f"wallet_{parts[1]}")
@@ -1744,18 +1746,18 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["fsm"] = {"step": "reject", "oid": oid}
         return await render(
             update,
-            f"Send a short reason for rejecting order {order_code(oid)}.\n"
+            f"❌ Send a short reason for rejecting order {order_code(oid)}.\n"
             "It will be forwarded to the buyer. Send /skip for no reason.",
             kb([[btn("🚫 Cancel", f"aov:{oid}")]]))
 
     if head == "astat":
         txt = (
             "📊 <b>Stats</b>\n\n"
-            f"Users: <b>{db.count_users()}</b>\n"
-            f"Products: <b>{db.count_products(only_active=False)}</b>\n"
-            f"Orders under review: <b>{db.count_orders(status='pending')}</b>\n"
-            f"Confirmed orders: <b>{db.count_orders(status='paid')}</b>\n"
-            f"Confirmed revenue: <b>{money(db.revenue())} {CURRENCY}</b>"
+            f"👤 Users: <b>{db.count_users()}</b>\n"
+            f"📦 Products: <b>{db.count_products(only_active=False)}</b>\n"
+            f"🔎 Orders under review: <b>{db.count_orders(status='pending')}</b>\n"
+            f"✅ Confirmed orders: <b>{db.count_orders(status='paid')}</b>\n"
+            f"💰 Confirmed revenue: <b>{money(db.revenue())} {CURRENCY}</b>"
         )
         return await render(update, txt, kb([[btn("⬅️  Back", "am")]]))
 
@@ -1779,7 +1781,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if head == "acpd":
         cid = int(parts[1])
         return await render(
-            update, "Delete this coupon permanently?",
+            update, "⚠️ Delete this coupon permanently?",
             kb([[btn("🗑 Yes, delete", f"acpdy:{cid}"),
                  btn("⬅️ No", f"acpv:{cid}")]]))
     if head == "acpdy":
@@ -1812,8 +1814,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["fsm"] = {"step": "broadcast"}
         return await render(
             update,
-            "📣 Send the message you want to broadcast to every user.\n"
-            "HTML formatting is supported. Send /cancel to abort.",
+            "📣 <b>Broadcast</b>\n\nSend the message you want to broadcast to every user.\n"
+            "<i>HTML formatting is supported.</i> Send /cancel to abort.",
             kb([[btn("🚫 Cancel", "am")]]))
 
     if head == "ast":
@@ -1830,12 +1832,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["fsm"] = {"step": "welcome"}
         return await render(
             update,
-            "Send the new welcome message. HTML allowed. "
+            "✏️ Send the new welcome message. <i>HTML allowed.</i> "
             "Use <code>{shop}</code> for the shop name.",
             kb([[btn("🚫 Cancel", "ast")]]))
     if head == "ass":
         context.user_data["fsm"] = {"step": "support"}
-        return await render(update, "Send the support contact (e.g. @yourname).",
+        return await render(update, "✏️ Send the support contact (e.g. @yourname).",
                             kb([[btn("🚫 Cancel", "ast")]]))
 
     # ---- admin: topups
@@ -1857,9 +1859,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 t["user_id"],
                 f"✅ <b>Top-up confirmed</b> — {topup_code(tid)}\n\n"
-                f"{money(t['amount'])} {CURRENCY} has been credited to your "
+                f"💰 {money(t['amount'])} {CURRENCY} has been credited to your "
                 f"wallet balance. New balance: "
-                f"{money(db.get_balance(t['user_id']))} {CURRENCY}.",
+                f"<b>{money(db.get_balance(t['user_id']))} {CURRENCY}</b>.",
                 parse_mode=ParseMode.HTML,
             )
         except Exception as e:  # noqa: BLE001
@@ -1870,7 +1872,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["fsm"] = {"step": "topup_reject", "tid": tid}
         return await render(
             update,
-            f"Send a short reason for rejecting top-up {topup_code(tid)}.\n"
+            f"❌ Send a short reason for rejecting top-up {topup_code(tid)}.\n"
             "It will be forwarded to the user. Send /skip for no reason.",
             kb([[btn("🚫 Cancel", f"atv:{tid}")]]))
 
@@ -1883,7 +1885,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tid = int(parts[1])
         context.user_data["fsm"] = {"step": "ticket_reply", "tid": tid}
         return await render(
-            update, f"Send your reply to ticket #{tid:05d}.",
+            update, f"💬 Send your reply to ticket #{tid:05d}.",
             kb([[btn("🚫 Cancel", f"tkv:{tid}")]]))
     if head == "tkclose":
         tid = int(parts[1])
@@ -1905,7 +1907,7 @@ async def category_picker(update, context):
         rows.append([btn(c["name"], f"apc:{c['id']}")])
     rows.append([btn("🚫 Cancel", "am")])
     await update.message.reply_text(
-        "Step 6/6 — pick a category:", reply_markup=kb(rows),
+        "📂 Step 6/6 — pick a category:", reply_markup=kb(rows),
         parse_mode=ParseMode.HTML,
     )
 
@@ -1938,7 +1940,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not fsm:
         await msg.reply_text(
-            "Use the menu below 👇", reply_markup=main_menu_markup(u.id)
+            "👇 Use the menu below.", reply_markup=main_menu_markup(u.id)
         )
         return
 
@@ -1986,21 +1988,21 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txid = text.split()[0] if text else ""
         if len(txid) < 10:
             await msg.reply_text(
-                "That does not look like a transaction hash. "
+                "⚠️ That does not look like a transaction hash. "
                 "Please paste the full TXID, or send /cancel."
             )
             return
         if db.txid_exists(txid):
             await msg.reply_text(
-                "This transaction hash has already been submitted. "
+                "⚠️ This transaction hash has already been submitted. "
                 "If you think this is a mistake, contact support."
             )
             return
         db.set_order_txid(oid, txid)
         context.user_data.pop("fsm", None)
         await msg.reply_text(
-            f"✅ Thanks! Order {order_code(oid)} is now under review.\n"
-            "You'll get a message here as soon as the payment is confirmed.",
+            f"✅ <b>Thanks!</b> Order {order_code(oid)} is now under review.\n"
+            "<i>You'll get a message here as soon as the payment is confirmed.</i>",
             reply_markup=main_menu_markup(u.id), parse_mode=ParseMode.HTML,
         )
         o = db.get_order(oid)
@@ -2019,7 +2021,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if amount <= 0:
                 raise ValueError
         except ValueError:
-            await msg.reply_text("Send a positive number, e.g. 20 or 50.5")
+            await msg.reply_text("⚠️ Send a positive number, e.g. 20 or 50.5")
             return
         fsm["amount"] = amount
         fsm["step"] = "topup_amount_set"
@@ -2053,21 +2055,21 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txid = text.split()[0] if text else ""
         if len(txid) < 10:
             await msg.reply_text(
-                "That does not look like a transaction hash. "
+                "⚠️ That does not look like a transaction hash. "
                 "Please paste the full TXID, or send /cancel."
             )
             return
         if db.topup_txid_exists(txid):
             await msg.reply_text(
-                "This transaction hash has already been submitted. "
+                "⚠️ This transaction hash has already been submitted. "
                 "If you think this is a mistake, contact support."
             )
             return
         db.set_topup_txid(tid, txid)
         context.user_data.pop("fsm", None)
         await msg.reply_text(
-            f"✅ Thanks! Top-up {topup_code(tid)} is now under review.\n"
-            "Your balance will update as soon as it's confirmed.",
+            f"✅ <b>Thanks!</b> Top-up {topup_code(tid)} is now under review.\n"
+            "<i>Your balance will update as soon as it's confirmed.</i>",
             reply_markup=main_menu_markup(u.id), parse_mode=ParseMode.HTML,
         )
         t = db.get_topup(tid)
@@ -2117,20 +2119,20 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not db.set_topup_status_from(
             tid, ("pending", "awaiting_payment"), "rejected", reason or None
         ):
-            await msg.reply_text(f"Top-up {topup_code(tid)} already processed.")
+            await msg.reply_text(f"ℹ️ Top-up {topup_code(tid)} already processed.")
             return
         t = db.get_topup(tid)
         try:
             await context.bot.send_message(
                 t["user_id"],
-                f"❌ Top-up {topup_code(tid)} was rejected."
+                f"❌ <b>Top-up {topup_code(tid)} was rejected.</b>"
                 + (f"\n\nReason: {esc(reason)}" if reason else "")
                 + "\n\nIf you believe this is an error, contact support.",
                 parse_mode=ParseMode.HTML,
             )
         except Exception:  # noqa: BLE001
             pass
-        await msg.reply_text(f"Top-up {topup_code(tid)} rejected.")
+        await msg.reply_text(f"❌ Top-up {topup_code(tid)} rejected.")
         return
 
     if step == "ticket_reply":
@@ -2159,27 +2161,27 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not db.set_order_status_from(
             oid, ("pending", "awaiting_payment"), "rejected", reason or None
         ):
-            await msg.reply_text(f"Order {order_code(oid)} already processed.")
+            await msg.reply_text(f"ℹ️ Order {order_code(oid)} already processed.")
             return
         o = db.get_order(oid)
         try:
             await context.bot.send_message(
                 o["user_id"],
-                f"❌ Order {order_code(oid)} was rejected."
+                f"❌ <b>Order {order_code(oid)} was rejected.</b>"
                 + (f"\n\nReason: {esc(reason)}" if reason else "")
                 + "\n\nIf you believe this is an error, contact support.",
                 parse_mode=ParseMode.HTML,
             )
         except Exception:  # noqa: BLE001
             pass
-        await msg.reply_text(f"Order {order_code(oid)} rejected.")
+        await msg.reply_text(f"❌ Order {order_code(oid)} rejected.")
         return
 
     if step == "wallet":
         db.set_setting(f"wallet_{fsm['net']}", text)
         context.user_data.pop("fsm", None)
         await msg.reply_text(
-            f"✅ {fsm['net']} address saved:\n<code>{esc(text)}</code>",
+            f"✅ <b>{fsm['net']} address saved:</b>\n<code>{esc(text)}</code>",
             parse_mode=ParseMode.HTML,
             reply_markup=kb([[btn("💠 Wallets", "aw")],
                              [btn("⚙️ Admin", "am")]]),
@@ -2190,22 +2192,22 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == "coupon_new_code":
         code = text.strip().upper()
         if not code or db.get_coupon(code):
-            await msg.reply_text("That code is empty or already taken. Try another.")
+            await msg.reply_text("⚠️ That code is empty or already taken. Try another.")
             return
         fsm.update(step="coupon_new_kind", code=code)
         await msg.reply_text(
-            "Discount type — send <b>percent</b> or <b>fixed</b>.",
+            "🎟 Discount type — send <b>percent</b> or <b>fixed</b>.",
             parse_mode=ParseMode.HTML)
         return
 
     if step == "coupon_new_kind":
         kind = text.strip().lower()
         if kind not in ("percent", "fixed"):
-            await msg.reply_text("Send exactly 'percent' or 'fixed'.")
+            await msg.reply_text("⚠️ Send exactly 'percent' or 'fixed'.")
             return
         fsm.update(step="coupon_new_amount", kind=kind)
         unit = "%" if kind == "percent" else CURRENCY
-        await msg.reply_text(f"Send the discount amount (number, {unit}).")
+        await msg.reply_text(f"💵 Send the discount amount (number, {unit}).")
         return
 
     if step == "coupon_new_amount":
@@ -2214,18 +2216,18 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if amount <= 0:
                 raise ValueError
         except ValueError:
-            await msg.reply_text("Send a positive number.")
+            await msg.reply_text("⚠️ Send a positive number.")
             return
         fsm.update(step="coupon_new_maxuses", amount=amount)
         await msg.reply_text(
-            "Max total uses — send a number, or -1 for unlimited.")
+            "🔢 Max total uses — send a number, or -1 for unlimited.")
         return
 
     if step == "coupon_new_maxuses":
         try:
             max_uses = int(text)
         except ValueError:
-            await msg.reply_text("Send a whole number, or -1 for unlimited.")
+            await msg.reply_text("⚠️ Send a whole number, or -1 for unlimited.")
             return
         cid = db.add_coupon(
             fsm["code"], fsm["kind"], fsm["amount"], max_uses=max_uses,
@@ -2233,7 +2235,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.log_admin_action(u.id, "coupon_create", fsm["code"])
         context.user_data.pop("fsm", None)
         await msg.reply_text(
-            f"✅ Coupon <b>{esc(fsm['code'])}</b> created.",
+            f"✅ <b>Coupon {esc(fsm['code'])} created.</b>",
             parse_mode=ParseMode.HTML,
             reply_markup=kb([[btn("🎟 Open coupon", f"acpv:{cid}")],
                              [btn("⚙️ Admin", "am")]]))
@@ -2244,13 +2246,13 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             target_uid = int(text.strip())
         except ValueError:
-            await msg.reply_text("Send a numeric Telegram user ID.")
+            await msg.reply_text("⚠️ Send a numeric Telegram user ID.")
             return
         fsm.update(step="adj_amount", target_uid=target_uid)
         bal = db.get_balance(target_uid)
         await msg.reply_text(
-            f"Current balance for <code>{target_uid}</code>: "
-            f"{money(bal)} {CURRENCY}\n\n"
+            f"💰 Current balance for <code>{target_uid}</code>: "
+            f"<b>{money(bal)} {CURRENCY}</b>\n\n"
             "Send the amount to add (or a negative number to deduct).",
             parse_mode=ParseMode.HTML)
         return
@@ -2261,7 +2263,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if delta == 0:
                 raise ValueError
         except ValueError:
-            await msg.reply_text("Send a non-zero number, e.g. 10 or -5.")
+            await msg.reply_text("⚠️ Send a non-zero number, e.g. 10 or -5.")
             return
         target_uid = fsm["target_uid"]
         new_bal = db.adjust_balance(target_uid, delta)
@@ -2276,9 +2278,10 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 target_uid,
-                f"💵 Your balance was adjusted by an admin: "
+                f"💵 <b>Your balance was adjusted by an admin:</b> "
                 f"{'+' if delta >= 0 else ''}{money(delta)} {CURRENCY}.\n"
                 f"New balance: {money(new_bal)} {CURRENCY}.",
+                parse_mode=ParseMode.HTML,
             )
         except Exception:  # noqa: BLE001
             pass
@@ -2323,7 +2326,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("fsm", None)
         ids = db.all_user_ids()
         sent = failed = 0
-        status = await msg.reply_text(f"Sending to {len(ids)} users…")
+        status = await msg.reply_text(f"📣 Sending to {len(ids)} users…")
         for i, uid in enumerate(ids, 1):
             try:
                 await context.bot.send_message(
@@ -2337,10 +2340,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(0.05)
             if i % 25 == 0:
                 try:
-                    await status.edit_text(f"Sending… {i}/{len(ids)}")
+                    await status.edit_text(f"📣 Sending… {i}/{len(ids)}")
                 except Exception:  # noqa: BLE001
                     pass
-        await status.edit_text(f"📣 Done. Delivered {sent}, failed {failed}.")
+        await status.edit_text(f"✅ <b>Broadcast done.</b> Delivered {sent}, failed {failed}.",
+                               parse_mode=ParseMode.HTML)
         return
 
     if step == "edit":
@@ -2351,19 +2355,19 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif text == "/skip":
                 db.update_product(pid, photo_file_id=None)
             else:
-                await msg.reply_text("Please send a photo, or /skip.")
+                await msg.reply_text("⚠️ Please send a photo, or /skip.")
                 return
         elif field == "price":
             try:
                 db.update_product(pid, price=float(text.replace(",", ".")))
             except ValueError:
-                await msg.reply_text("Send a number, e.g. 19.99")
+                await msg.reply_text("⚠️ Send a number, e.g. 19.99")
                 return
         elif field == "stock":
             try:
                 db.update_product(pid, stock=int(text))
             except ValueError:
-                await msg.reply_text("Send a whole number, or -1 for unlimited.")
+                await msg.reply_text("⚠️ Send a whole number, or -1 for unlimited.")
                 return
         elif field == "delivery":
             db.update_product(
@@ -2400,7 +2404,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             draft["price"] = float(text.replace(",", "."))
         except ValueError:
-            await msg.reply_text("Send a number, e.g. 19.99")
+            await msg.reply_text("⚠️ Send a number, e.g. 19.99")
             return
         fsm.update(step="new_photo", draft=draft)
         await msg.reply_text(
@@ -2412,7 +2416,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if photo_id:
             draft["photo"] = photo_id
         elif text != "/skip":
-            await msg.reply_text("Send a photo, or /skip.")
+            await msg.reply_text("⚠️ Send a photo, or /skip.")
             return
         fsm.update(step="new_delivery", draft=draft)
         await msg.reply_text(
@@ -2462,7 +2466,8 @@ async def post_init(app: Application):
     log.info("running as @%s | admins: %s", me.username, ADMIN_IDS or "NONE")
     for admin_id in ADMIN_IDS:
         try:
-            await app.bot.send_message(admin_id, "🤖 Shop bot is online.")
+            await app.bot.send_message(admin_id, "🤖 <b>Shop bot is online.</b>",
+                                       parse_mode=ParseMode.HTML)
         except Exception:  # noqa: BLE001
             pass
 
